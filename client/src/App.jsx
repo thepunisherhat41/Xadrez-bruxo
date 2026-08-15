@@ -3,9 +3,22 @@ import { Chess } from 'chess.js';
 import { createBattleScene } from './game/createScene.js';
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:2567';
+const INITIAL_CLOCK_MS = 10 * 60 * 1000;
+const PIECE_NAMES = { p: 'Peão', r: 'Torre', n: 'Cavalo', b: 'Bispo', q: 'Rainha', k: 'Rei' };
 
 function randomName() {
   return `Mago-${Math.floor(1000 + Math.random() * 9000)}`;
+}
+
+function formatClock(milliseconds) {
+  const totalSeconds = Math.max(0, Math.ceil(Number(milliseconds || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function armyName(color) {
+  return color === 'w' ? 'Marfim' : 'Obsidiana';
 }
 
 export default function App() {
@@ -15,18 +28,30 @@ export default function App() {
   const chessRef = useRef(new Chess());
   const selectedRef = useRef(null);
   const modeRef = useRef('solo');
-  const stateRef = useRef({ color: 'w', connected: false, started: true });
+  const announcementTimerRef = useRef(null);
+  const stateRef = useRef({ color: 'w', connected: false, started: true, gameOver: false });
 
   const [name, setName] = useState(randomName);
   const [roomCode, setRoomCode] = useState('');
   const [currentRoom, setCurrentRoom] = useState('');
   const [connected, setConnected] = useState(false);
   const [mode, setMode] = useState('solo');
-  const [, setColor] = useState('w');
+  const [color, setColor] = useState('w');
   const [status, setStatus] = useState('Duelo local pronto');
   const [turn, setTurn] = useState('w');
   const [history, setHistory] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [players, setPlayers] = useState([]);
+  const [clocks, setClocks] = useState({ w: INITIAL_CLOCK_MS, b: INITIAL_CLOCK_MS });
+  const [announcement, setAnnouncement] = useState(null);
+
+  const announce = useCallback((kind, title, subtitle = '') => {
+    if (announcementTimerRef.current) clearTimeout(announcementTimerRef.current);
+    const payload = { id: Date.now(), kind, title, subtitle };
+    setAnnouncement(payload);
+    const duration = kind === 'checkmate' ? 3000 : kind === 'check' ? 1900 : 1450;
+    announcementTimerRef.current = setTimeout(() => setAnnouncement(null), duration);
+  }, []);
 
   const legalMovesFor = useCallback((square) => {
     try {
@@ -41,21 +66,39 @@ export default function App() {
     chessRef.current.load(payload.fen);
     setTurn(chessRef.current.turn());
     setHistory(payload.history || []);
+    if (payload.players) setPlayers(payload.players);
+    if (payload.clocks) setClocks(payload.clocks);
+    stateRef.current.started = Boolean(payload.started);
+    stateRef.current.gameOver = Boolean(payload.gameOver);
+
     sceneRef.current?.renderFen(payload.fen);
     sceneRef.current?.highlightSquares(null, []);
+    sceneRef.current?.setBattleState({ check: payload.check, checkmate: payload.checkmate });
     selectedRef.current = null;
     setSelected(null);
 
-    if (payload.checkmate) {
-      setStatus(`XEQUE-MATE — ${payload.turn === 'w' ? 'Obsidiana' : 'Marfim'} venceu`);
+    if (payload.resultReason === 'timeout') {
+      const winner = armyName(payload.winner);
+      setStatus(`TEMPO ESGOTADO — ${winner} venceu a batalha.`);
+      announce('checkmate', 'TEMPO ESGOTADO', `${winner.toUpperCase()} VENCEU`);
+    } else if (payload.checkmate) {
+      const winner = armyName(payload.winner || (payload.turn === 'w' ? 'b' : 'w'));
+      setStatus(`XEQUE-MATE — ${winner} venceu`);
+      announce('checkmate', 'XEQUE-MATE', `${winner.toUpperCase()} DOMINOU A ARENA`);
+    } else if (payload.draw) {
+      setStatus('A batalha terminou em empate.');
+      announce('draw', 'EMPATE', 'NENHUM EXÉRCITO CEDEU');
     } else if (payload.check) {
       setStatus('XEQUE! O rei está sob ataque.');
+      announce('check', 'XEQUE', 'O REI ESTÁ SOB ATAQUE');
     } else if (payload.gameOver) {
       setStatus('Partida encerrada.');
+    } else if (!payload.started && modeRef.current === 'online') {
+      setStatus('Sala criada — aguardando adversário');
     } else {
       setStatus(payload.turn === 'w' ? 'Turno do exército de Marfim' : 'Turno do exército de Obsidiana');
     }
-  }, []);
+  }, [announce]);
 
   const send = useCallback((payload) => {
     const socket = socketRef.current;
@@ -87,21 +130,36 @@ export default function App() {
         setColor(message.color);
         stateRef.current.color = message.color;
         stateRef.current.started = message.started;
+        stateRef.current.gameOver = false;
+        sceneRef.current?.setPerspective(message.color);
         setStatus(message.started ? 'O duelo começou!' : 'Sala criada — aguardando adversário');
+        if (message.started) announce('duel', 'DUELO INICIADO', `${armyName(message.color).toUpperCase()} É O SEU EXÉRCITO`);
       }
       if (message.type === 'state') {
-        stateRef.current.started = message.started;
         applyState(message);
+      }
+      if (message.type === 'clock') {
+        if (message.clocks) setClocks(message.clocks);
+        if (message.turn) setTurn(message.turn);
       }
       if (message.type === 'move') {
         const captured = Boolean(message.move?.captured);
+        if (captured) {
+          const attacker = sceneRef.current?.pieceLabel(message.move.from) || PIECE_NAMES[message.move.piece] || 'Guerreiro';
+          const victim = PIECE_NAMES[message.move.captured] || 'inimigo';
+          announce('capture', 'CAPTURA', `${attacker.toUpperCase()} DESTRUIU ${victim.toUpperCase()}`);
+        }
         sceneRef.current?.animateMove(message.move.from, message.move.to, captured, () => applyState(message));
       }
       if (message.type === 'error') setStatus(message.message);
-      if (message.type === 'opponent-left') setStatus('Seu adversário deixou a arena.');
+      if (message.type === 'opponent-left') {
+        stateRef.current.started = false;
+        setStatus('Seu adversário deixou a arena. O relógio foi congelado.');
+        announce('warning', 'PORTAL ROMPIDO', 'O ADVERSÁRIO DEIXOU A ARENA');
+      }
     });
     return socket;
-  }, [applyState]);
+  }, [announce, applyState]);
 
   const createRoom = useCallback(() => {
     const socket = connect();
@@ -123,15 +181,22 @@ export default function App() {
     modeRef.current = 'solo';
     stateRef.current.started = true;
     stateRef.current.color = 'w';
+    stateRef.current.gameOver = false;
     setMode('solo');
+    setColor('w');
+    setPlayers([]);
+    setClocks({ w: INITIAL_CLOCK_MS, b: INITIAL_CLOCK_MS });
     chessRef.current.reset();
     setHistory([]);
     setTurn('w');
     setCurrentRoom('');
     selectedRef.current = null;
     setSelected(null);
+    setAnnouncement(null);
     sceneRef.current?.renderFen(chessRef.current.fen());
     sceneRef.current?.highlightSquares(null, []);
+    sceneRef.current?.setPerspective('w');
+    sceneRef.current?.setBattleState({ check: false, checkmate: false });
     setStatus('Duelo local reiniciado');
   }, []);
 
@@ -142,6 +207,7 @@ export default function App() {
     const currentMode = modeRef.current;
     const playerColor = stateRef.current.color;
 
+    if (stateRef.current.gameOver) return;
     if (currentMode === 'online' && (!stateRef.current.started || chess.turn() !== playerColor)) return;
 
     if (!currentSelected) {
@@ -174,19 +240,34 @@ export default function App() {
     }
 
     const from = currentSelected;
+    const attacker = sceneRef.current?.pieceLabel(from) || PIECE_NAMES[legal.piece] || 'Guerreiro';
     const move = chess.move({ from, to: square, promotion: 'q' });
     selectedRef.current = null;
     setSelected(null);
     sceneRef.current?.highlightSquares(null, []);
+    if (move.captured) announce('capture', 'CAPTURA', `${attacker.toUpperCase()} DESTRUIU ${PIECE_NAMES[move.captured].toUpperCase()}`);
     sceneRef.current?.animateMove(from, square, Boolean(move.captured), () => {
       sceneRef.current?.renderFen(chess.fen());
+      sceneRef.current?.setBattleState({ check: chess.isCheck(), checkmate: chess.isCheckmate() });
       setTurn(chess.turn());
       setHistory(chess.history());
-      if (chess.isCheckmate()) setStatus('XEQUE-MATE! A arena escolheu seu campeão.');
-      else if (chess.isCheck()) setStatus('XEQUE!');
-      else setStatus(chess.turn() === 'w' ? 'Turno do exército de Marfim' : 'Turno do exército de Obsidiana');
+      if (chess.isCheckmate()) {
+        stateRef.current.gameOver = true;
+        const winner = chess.turn() === 'w' ? 'Obsidiana' : 'Marfim';
+        setStatus(`XEQUE-MATE! ${winner} venceu.`);
+        announce('checkmate', 'XEQUE-MATE', `${winner.toUpperCase()} DOMINOU A ARENA`);
+      } else if (chess.isDraw()) {
+        stateRef.current.gameOver = true;
+        setStatus('A batalha terminou em empate.');
+        announce('draw', 'EMPATE', 'NENHUM EXÉRCITO CEDEU');
+      } else if (chess.isCheck()) {
+        setStatus('XEQUE!');
+        announce('check', 'XEQUE', 'O REI ESTÁ SOB ATAQUE');
+      } else {
+        setStatus(chess.turn() === 'w' ? 'Turno do exército de Marfim' : 'Turno do exército de Obsidiana');
+      }
     });
-  }, [legalMovesFor, send]);
+  }, [announce, legalMovesFor, send]);
 
   useEffect(() => {
     if (!canvasRef.current) return undefined;
@@ -196,23 +277,41 @@ export default function App() {
     return () => battleScene.dispose();
   }, [handleSquareClick]);
 
-  useEffect(() => () => socketRef.current?.close(), []);
+  useEffect(() => () => {
+    socketRef.current?.close();
+    if (announcementTimerRef.current) clearTimeout(announcementTimerRef.current);
+  }, []);
 
   const turnLabel = turn === 'w' ? 'MARFIM' : 'OBSIDIANA';
   const connectionLabel = connected ? 'PORTAL ONLINE' : mode === 'solo' ? 'MODO LOCAL' : 'OFFLINE';
   const lastMoves = useMemo(() => history.slice(-8).reverse(), [history]);
+  const whitePlayer = players.find((player) => player.color === 'w')?.name || (mode === 'solo' ? 'Comandante Marfim' : 'Aguardando...');
+  const blackPlayer = players.find((player) => player.color === 'b')?.name || (mode === 'solo' ? 'Comandante Obsidiana' : 'Aguardando...');
+  const whiteClock = mode === 'online' ? formatClock(clocks.w) : '∞';
+  const blackClock = mode === 'online' ? formatClock(clocks.b) : '∞';
 
   return (
     <main className="app-shell">
       <canvas ref={canvasRef} className="battle-canvas" />
       <div className="vignette" />
 
+      {announcement && (
+        <div key={announcement.id} className={`battle-announcement ${announcement.kind}`}>
+          <div className="announcement-line" />
+          <strong>{announcement.title}</strong>
+          {announcement.subtitle && <span>{announcement.subtitle}</span>}
+        </div>
+      )}
+
       <header className="topbar glass">
         <div>
           <div className="eyebrow">ARCANE BATTLE CHESS</div>
           <h1>XADREZ <span>BRUXO</span></h1>
         </div>
-        <div className={`connection ${connected ? 'online' : ''}`}><i />{connectionLabel}</div>
+        <div className="topbar-status">
+          {mode === 'online' && <div className={`side-badge ${color === 'w' ? 'ivory' : 'obsidian'}`}>{armyName(color).toUpperCase()}</div>}
+          <div className={`connection ${connected ? 'online' : ''}`}><i />{connectionLabel}</div>
+        </div>
       </header>
 
       <section className="left-panel glass">
@@ -230,6 +329,20 @@ export default function App() {
       </section>
 
       <section className="right-panel glass">
+        <div className="duelists">
+          <div className={`duelist obsidian ${turn === 'b' ? 'active' : ''}`}>
+            <div className="duelist-sigil">◆</div>
+            <div className="duelist-info"><small>OBSIDIANA</small><strong>{blackPlayer}</strong></div>
+            <div className="clock">{blackClock}</div>
+          </div>
+          <div className="versus">VS</div>
+          <div className={`duelist ivory ${turn === 'w' ? 'active' : ''}`}>
+            <div className="duelist-sigil">◇</div>
+            <div className="duelist-info"><small>MARFIM</small><strong>{whitePlayer}</strong></div>
+            <div className="clock">{whiteClock}</div>
+          </div>
+        </div>
+
         <div className="turn-card">
           <small>AGORA</small>
           <strong>{turnLabel}</strong>
@@ -243,7 +356,7 @@ export default function App() {
       </section>
 
       <footer className="hud glass">
-        <span>ARRASTE PARA GIRAR</span><b>•</b><span>SCROLL PARA ZOOM</span><b>•</b><span>CAPTURAS CINEMATOGRÁFICAS</span>
+        <span>ARRASTE PARA GIRAR</span><b>•</b><span>SCROLL PARA ZOOM</span><b>•</b><span>COMBATE CINEMATOGRÁFICO ATIVO</span>
       </footer>
     </main>
   );
