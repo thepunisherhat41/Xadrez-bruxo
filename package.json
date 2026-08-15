@@ -5,6 +5,7 @@
   "workspaces": ["client", "server"],
   "scripts": {
     "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
+    "dev:mobile": "node scripts/dev-mobile.mjs",
     "build": "npm run build -w client",
     "start": "npm run start -w server"
   },
