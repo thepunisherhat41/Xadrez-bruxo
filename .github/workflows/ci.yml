@@ -12,7 +12,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,3 +49,102 @@ jobs:
 
           cat /tmp/xadrez-server.log
           exit 1
+
+      - name: Verify production Render + real multiplayer duel
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          PRODUCTION_HTTP_URL: https://xadrez-bruxo.onrender.com
+          PRODUCTION_WS_URL: wss://xadrez-bruxo.onrender.com
+          EXPECTED_BUILD: alpha-20260815-1132
+        run: |
+          set -euo pipefail
+
+          echo "Waiting for Render to publish expected build: $EXPECTED_BUILD"
+          READY=0
+          for attempt in {1..60}; do
+            BODY="$(curl --fail --silent --show-error --max-time 25 "$PRODUCTION_HTTP_URL/health" || true)"
+            echo "Attempt $attempt: ${BODY:-no response}"
+            if printf '%s' "$BODY" | grep -Fq "\"build\":\"$EXPECTED_BUILD\""; then
+              READY=1
+              break
+            fi
+            sleep 5
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "Render did not expose the expected build in time."
+            exit 1
+          fi
+
+          node --input-type=module <<'NODE'
+          const wsUrl = process.env.PRODUCTION_WS_URL;
+          const timeoutMs = 30000;
+
+          const waitFor = (ws, predicate, label) => new Promise((resolve, reject) => {
+            const timer = setTimeout(() => cleanup(new Error(`timeout waiting for ${label}`)), timeoutMs);
+            const onMessage = (event) => {
+              let message;
+              try { message = JSON.parse(String(event.data)); } catch { return; }
+              if (predicate(message)) cleanup(null, message);
+            };
+            const onError = () => cleanup(new Error(`websocket error while waiting for ${label}`));
+            const cleanup = (error, value) => {
+              clearTimeout(timer);
+              ws.removeEventListener('message', onMessage);
+              ws.removeEventListener('error', onError);
+              error ? reject(error) : resolve(value);
+            };
+            ws.addEventListener('message', onMessage);
+            ws.addEventListener('error', onError);
+          });
+
+          const openSocket = (label) => new Promise((resolve, reject) => {
+            const ws = new WebSocket(wsUrl);
+            const timer = setTimeout(() => reject(new Error(`${label} open timeout`)), timeoutMs);
+            ws.addEventListener('open', () => {
+              clearTimeout(timer);
+              resolve(ws);
+            }, { once: true });
+            ws.addEventListener('error', () => {
+              clearTimeout(timer);
+              reject(new Error(`${label} websocket error`));
+            }, { once: true });
+          });
+
+          let a;
+          let b;
+          try {
+            a = await openSocket('player A');
+            const helloA = waitFor(a, (m) => m.type === 'hello', 'player A hello');
+            // Server may send hello immediately after open, so tolerate it being missed by
+            // proceeding directly to room creation if no hello is observed quickly.
+            await Promise.race([helloA, new Promise((r) => setTimeout(r, 500))]);
+
+            const roomPromise = waitFor(a, (m) => m.type === 'room' && m.color === 'w', 'room creation');
+            a.send(JSON.stringify({ type: 'create', name: 'Production-Smoke-A' }));
+            const room = await roomPromise;
+            if (!room.code) throw new Error('room code missing');
+            console.log(`Created room ${room.code}`);
+
+            b = await openSocket('player B');
+            const joinedA = waitFor(a, (m) => m.type === 'state' && m.started === true && m.players?.length === 2, 'A sees duel started');
+            const joinedB = waitFor(b, (m) => m.type === 'state' && m.started === true && m.players?.length === 2, 'B sees duel started');
+            b.send(JSON.stringify({ type: 'join', code: room.code, name: 'Production-Smoke-B' }));
+            await Promise.all([joinedA, joinedB]);
+            console.log('Two-player room synchronized');
+
+            const moveSeenByB = waitFor(
+              b,
+              (m) => m.type === 'move' && m.move?.from === 'e2' && m.move?.to === 'e4' && m.turn === 'b',
+              'e2-e4 on player B'
+            );
+            a.send(JSON.stringify({ type: 'move', from: 'e2', to: 'e4', promotion: 'q' }));
+            const move = await moveSeenByB;
+            console.log(`Move synchronized: ${move.move.san}; next turn=${move.turn}`);
+            console.log('PRODUCTION MULTIPLAYER SMOKE: PASS');
+          } finally {
+            try { a?.close(); } catch {}
+            try { b?.close(); } catch {}
+          }
+          NODE
