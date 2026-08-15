@@ -1,0 +1,12 @@
+{
+  "name": "Xadrez Bruxo",
+  "short_name": "Xadrez Bruxo",
+  "description": "Battle chess 3D multiplayer mobile-first.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#050713",
+  "theme_color": "#050713",
+  "categories": ["games", "entertainment"]
+}
