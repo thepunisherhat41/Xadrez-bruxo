@@ -19,6 +19,8 @@ Um **battle chess 3D multiplayer** para navegador: regras reais de xadrez, arena
   - rei se move de forma mais lenta e imponente.
 - Capturas com reação da vítima, colapso, partículas, anel de impacto e camera shake.
 - Banners cinematográficos para captura, xeque, xeque-mate, empate e timeout.
+- Áudio procedural original via Web Audio API para início do duelo, captura, xeque, xeque-mate, empate e alertas.
+- Atalho `M` para silenciar/reativar os efeitos sonoros.
 - Câmera orbital, zoom, iluminação dinâmica, glow e atmosfera/fog.
 - Perspectiva automática do tabuleiro conforme a cor do jogador online.
 - Modo local para testar imediatamente.
@@ -85,7 +87,7 @@ server (Node + ws + chess.js)
 
 1. Modelos GLB/GLTF originais para substituir as peças procedurais.
 2. Rigging e sequências completas de ataque / defesa / morte por personagem.
-3. Áudio reativo, música dinâmica e impacto espacial.
+3. Música dinâmica e áudio espacial mais avançado.
 4. Modos Bullet / Blitz / Rapid configuráveis.
 5. Lobby público, matchmaking e reconexão segura.
 6. ELO, perfil, histórico persistente e replay.
