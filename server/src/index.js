@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 
 const PORT = Number(process.env.PORT || 2567);
 const INITIAL_CLOCK_MS = Number(process.env.INITIAL_CLOCK_MS || 10 * 60 * 1000);
+const BUILD_ID = 'alpha-20260815-1132';
 const rooms = new Map();
 
 function roomCode() {
@@ -159,7 +160,7 @@ function makeMove(ws, payload) {
 const httpServer = createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size }));
+    res.end(JSON.stringify({ ok: true, rooms: rooms.size, build: BUILD_ID }));
     return;
   }
   res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
