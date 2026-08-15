@@ -33,6 +33,20 @@ Um **battle chess 3D multiplayer** para navegador: regras reais de xadrez, arena
 - Interface responsiva para desktop e celular.
 - GitHub Actions com build do cliente, validação do servidor e smoke test do endpoint `/health`.
 
+## Estado de validação
+
+O CI valida automaticamente:
+
+```text
+npm install
+node --check server/src/index.js
+npm run build
+start do servidor multiplayer
+GET /health
+```
+
+A primeira execução revelou uma configuração incorreta de cache sem `package-lock.json`; o workflow foi corrigido e a execução seguinte passou em todas as etapas.
+
 ## Executar localmente
 
 Requer Node.js 20+.
