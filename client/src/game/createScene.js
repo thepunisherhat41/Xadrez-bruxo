@@ -130,6 +130,82 @@ function parseFen(fen) {
   return board;
 }
 
+function combatProfile(type, start, end, captured) {
+  const middle = start.add(end).scale(0.5);
+  const impactHeight = captured ? 0.25 : 0;
+
+  if (type === 'n') {
+    return {
+      duration: 46,
+      spin: 0.35,
+      keys: [
+        { frame: 0, value: start },
+        { frame: 12, value: start.add(new Vector3(0, 0.85, 0)) },
+        { frame: 26, value: middle.add(new Vector3(0, 2.15, 0)) },
+        { frame: 46, value: end.add(new Vector3(0, impactHeight, 0)) },
+      ],
+    };
+  }
+
+  if (type === 'r') {
+    return {
+      duration: 32,
+      spin: 0,
+      keys: [
+        { frame: 0, value: start },
+        { frame: 21, value: middle.add(new Vector3(0, 0.16, 0)) },
+        { frame: 32, value: end },
+      ],
+    };
+  }
+
+  if (type === 'b') {
+    return {
+      duration: 38,
+      spin: Math.PI * 1.2,
+      keys: [
+        { frame: 0, value: start },
+        { frame: 18, value: middle.add(new Vector3(0, 0.95, 0)) },
+        { frame: 38, value: end },
+      ],
+    };
+  }
+
+  if (type === 'q') {
+    return {
+      duration: 26,
+      spin: Math.PI * 1.6,
+      keys: [
+        { frame: 0, value: start },
+        { frame: 9, value: middle.add(new Vector3(0, 1.15, 0)) },
+        { frame: 26, value: end },
+      ],
+    };
+  }
+
+  if (type === 'k') {
+    return {
+      duration: 42,
+      spin: 0.5,
+      keys: [
+        { frame: 0, value: start },
+        { frame: 22, value: middle.add(new Vector3(0, 0.58, 0)) },
+        { frame: 42, value: end },
+      ],
+    };
+  }
+
+  return {
+    duration: 30,
+    spin: 0,
+    keys: [
+      { frame: 0, value: start },
+      { frame: 20, value: middle.add(new Vector3(0, captured ? 0.62 : 0.34, 0)) },
+      { frame: 30, value: end },
+    ],
+  };
+}
+
 export function createBattleScene(canvas, onSquareClick) {
   const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, antialias: true });
   const scene = new Scene(engine);
@@ -217,7 +293,7 @@ export function createBattleScene(canvas, onSquareClick) {
   }
 
   function burstAt(square, color = new Color3(0.25, 0.5, 1)) {
-    const particles = new ParticleSystem(`burst-${Date.now()}`, 160, scene);
+    const particles = new ParticleSystem(`burst-${Date.now()}`, 180, scene);
     particles.particleTexture = new Texture('https://assets.babylonjs.com/textures/flare.png', scene);
     particles.emitter = squarePosition(square).add(new Vector3(0, 0.85, 0));
     particles.minEmitBox = new Vector3(-0.08, -0.08, -0.08);
@@ -226,24 +302,49 @@ export function createBattleScene(canvas, onSquareClick) {
     particles.color2 = new Color4(1, 0.35, 0.08, 1);
     particles.colorDead = new Color4(0, 0, 0, 0);
     particles.minSize = 0.05;
-    particles.maxSize = 0.2;
+    particles.maxSize = 0.24;
     particles.minLifeTime = 0.18;
-    particles.maxLifeTime = 0.55;
-    particles.emitRate = 900;
+    particles.maxLifeTime = 0.62;
+    particles.emitRate = 1100;
     particles.blendMode = ParticleSystem.BLENDMODE_ADD;
     particles.gravity = new Vector3(0, -5, 0);
-    particles.direction1 = new Vector3(-3, 1, -3);
-    particles.direction2 = new Vector3(3, 5, 3);
+    particles.direction1 = new Vector3(-3.5, 1, -3.5);
+    particles.direction2 = new Vector3(3.5, 5.5, 3.5);
     particles.minAngularSpeed = 0;
     particles.maxAngularSpeed = Math.PI;
     particles.minEmitPower = 0.7;
-    particles.maxEmitPower = 2.4;
+    particles.maxEmitPower = 2.7;
     particles.updateSpeed = 0.012;
     particles.start();
     setTimeout(() => {
       particles.stop();
-      setTimeout(() => particles.dispose(), 700);
-    }, 90);
+      setTimeout(() => particles.dispose(), 800);
+    }, 110);
+  }
+
+  function impactRing(square, material) {
+    const ring = MeshBuilder.CreateTorus(`impact-${Date.now()}`, { diameter: 0.8, thickness: 0.055, tessellation: 48 }, scene);
+    ring.position = squarePosition(square).add(new Vector3(0, 0.12, 0));
+    ring.rotation.x = Math.PI / 2;
+    ring.material = material;
+    ring.scaling = new Vector3(0.25, 0.25, 0.25);
+    Animation.CreateAndStartAnimation('impact-scale', ring, 'scaling', 60, 24, ring.scaling.clone(), new Vector3(3.8, 3.8, 3.8), 0);
+    Animation.CreateAndStartAnimation('impact-fade', ring, 'visibility', 60, 24, 1, 0, 0);
+    setTimeout(() => ring.dispose(), 500);
+  }
+
+  function shakeCamera(strength = 0.22) {
+    const alpha = camera.alpha;
+    const beta = camera.beta;
+    const radius = camera.radius;
+    camera.alpha += strength * 0.12;
+    camera.beta -= strength * 0.08;
+    camera.radius = Math.max(camera.lowerRadiusLimit, radius - strength);
+    setTimeout(() => {
+      camera.alpha = alpha;
+      camera.beta = beta;
+      camera.radius = radius;
+    }, 100);
   }
 
   function animateMove(from, to, captured, callback) {
@@ -252,23 +353,66 @@ export function createBattleScene(canvas, onSquareClick) {
       callback?.();
       return;
     }
+
+    const piece = mesh.metadata?.piece || { type: 'p', color: 'w' };
+    const victim = captured ? pieceMeshes.get(to) : null;
     const start = mesh.position.clone();
     const end = squarePosition(to);
     end.y = start.y;
-    const lift = start.add(end).scale(0.5);
-    lift.y += captured ? 1.65 : 0.72;
+    const profile = combatProfile(piece.type, start, end, captured);
 
-    const animation = new Animation('move', 'position', 60, Animation.ANIMATIONTYPE_VECTOR3, Animation.ANIMATIONLOOPMODE_CONSTANT);
-    animation.setKeys([
-      { frame: 0, value: start },
-      { frame: 18, value: lift },
-      { frame: 36, value: end },
-    ]);
+    if (victim) {
+      const originalScale = victim.scaling.clone();
+      const collapse = new Vector3(originalScale.x * 1.18, originalScale.y * 0.22, originalScale.z * 1.18);
+      Animation.CreateAndStartAnimation('victim-collapse', victim, 'scaling', 60, profile.duration, originalScale, collapse, 0);
+      Animation.CreateAndStartAnimation('victim-fall', victim, 'rotation.z', 60, profile.duration, victim.rotation.z, victim.rotation.z + 0.9, 0);
+    }
+
+    const animation = new Animation('combat-move', 'position', 60, Animation.ANIMATIONTYPE_VECTOR3, Animation.ANIMATIONLOOPMODE_CONSTANT);
+    animation.setKeys(profile.keys);
     mesh.animations = [animation];
-    scene.beginAnimation(mesh, 0, 36, false, 1, () => {
-      if (captured) burstAt(to, mesh.metadata.piece.color === 'w' ? new Color3(0.2, 0.6, 1) : new Color3(1, 0.12, 0.02));
+
+    if (profile.spin) {
+      Animation.CreateAndStartAnimation('combat-spin', mesh, 'rotation.y', 60, profile.duration, mesh.rotation.y, mesh.rotation.y + profile.spin, 0);
+    }
+
+    scene.beginAnimation(mesh, 0, profile.duration, false, 1, () => {
+      if (captured) {
+        const impactMaterial = piece.color === 'w' ? materials.whiteGlow : materials.blackGlow;
+        burstAt(to, piece.color === 'w' ? new Color3(0.2, 0.6, 1) : new Color3(1, 0.12, 0.02));
+        impactRing(to, impactMaterial);
+        shakeCamera(piece.type === 'r' ? 0.48 : piece.type === 'q' ? 0.38 : piece.type === 'n' ? 0.34 : 0.26);
+      }
       callback?.();
     });
+  }
+
+  function setPerspective(color) {
+    const destination = color === 'b' ? Math.PI / 2 : -Math.PI / 2;
+    Animation.CreateAndStartAnimation('perspective', camera, 'alpha', 60, 42, camera.alpha, destination, 0);
+  }
+
+  function setBattleState({ check = false, checkmate = false } = {}) {
+    if (checkmate) {
+      glow.intensity = 1.2;
+      warm.intensity = 18;
+      cool.intensity = 18;
+      scene.fogDensity = 0.028;
+      Animation.CreateAndStartAnimation('final-camera', camera, 'radius', 60, 54, camera.radius, 9.4, 0);
+      return;
+    }
+    if (check) {
+      glow.intensity = 0.92;
+      warm.intensity = 15;
+      cool.intensity = 10;
+      scene.fogDensity = 0.022;
+      shakeCamera(0.18);
+      return;
+    }
+    glow.intensity = 0.65;
+    warm.intensity = 10;
+    cool.intensity = 12;
+    scene.fogDensity = 0.018;
   }
 
   scene.onPointerDown = (_, pick) => {
@@ -295,6 +439,8 @@ export function createBattleScene(canvas, onSquareClick) {
     renderFen,
     highlightSquares,
     animateMove,
+    setPerspective,
+    setBattleState,
     pieceLabel(square) {
       const piece = pieceMeshes.get(square)?.metadata?.piece;
       return piece ? PIECE_NAMES[piece.type] : null;
