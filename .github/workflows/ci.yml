@@ -1,0 +1,52 @@
+name: Xadrez Bruxo CI
+
+on:
+  push:
+    branches: [main, agent/initial-battle-chess]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check multiplayer server syntax
+        run: node --check server/src/index.js
+
+      - name: Build 3D client
+        run: npm run build
+
+      - name: Smoke test multiplayer health
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run start -w server > /tmp/xadrez-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:2567/health > /tmp/health.json; then
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat /tmp/xadrez-server.log
+          exit 1
