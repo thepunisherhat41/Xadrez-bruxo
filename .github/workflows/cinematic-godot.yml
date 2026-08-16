@@ -45,12 +45,12 @@ jobs:
           set -euo pipefail
           bash game/tools/fetch_visual_assets.sh
 
-      - name: Probe richer CC0 modular warrior pack
+      - name: Probe RPG wizard knight ranger assassin monk pack
         shell: bash
         continue-on-error: true
         run: |
           set -o pipefail
-          bash game/tools/fetch_modular_men.sh /tmp/quaternius-modular-men 2>&1 | tee modular-men.log
+          bash game/tools/fetch_rpg_characters.sh /tmp/quaternius-rpg 2>&1 | tee rpg-characters.log
 
       - name: Import project and compile scripts
         shell: bash
@@ -109,5 +109,5 @@ jobs:
             cinematic-asset-probe.log
             cinematic-smoke.log
             cinematic-visual.log
-            modular-men.log
+            rpg-characters.log
           if-no-files-found: warn
