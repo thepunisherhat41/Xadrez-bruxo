@@ -45,13 +45,15 @@ static func create_piece(code: String, square: String) -> Node3D:
 	character.name = "Character"
 	root.add_child(character)
 	character.scale = Vector3.ONE * float(CLASS_SCALE.get(kind, 0.76))
-	# Models face -Z at rotation 0. White advances toward -Z and black toward +Z.
 	character.rotation.y = PI if color == "w" else 0.0
 	_enable_shadows(character)
 	_tint_character(character, color)
 	_start_idle(character, square)
 	_add_faction_base(root, color, kind)
 	_add_class_sigil(root, color, kind)
+	var driver := CharacterMotionDriver.new()
+	driver.name = "MotionDriver"
+	root.add_child(driver)
 	return root
 
 static func play_action(piece: Node3D, action: String) -> void:
