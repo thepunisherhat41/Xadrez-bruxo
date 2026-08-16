@@ -3,15 +3,15 @@ extends Node3D
 
 var camera: Camera3D
 var side := "w"
-var yaw_offset := 0.0
+var yaw_offset := deg_to_rad(-6.5)
 var zoom := 1.0
-var tactical_distance := 15.8
-var tactical_height := 9.45
-var look_target := Vector3(0, 0.62, -0.25)
+var tactical_distance := 15.55
+var tactical_height := 8.85
+var look_target := Vector3(0, 0.66, -0.22)
 
 func _ready() -> void:
 	camera = Camera3D.new()
-	camera.fov = 42.0
+	camera.fov = 42.5
 	camera.near = 0.15
 	camera.far = 120.0
 	camera.keep_aspect = Camera3D.KEEP_HEIGHT
@@ -28,15 +28,15 @@ func set_side(next_side: String, animated := true) -> void:
 		rotation.y = target_rotation
 
 func orbit(delta_x: float) -> void:
-	yaw_offset = clampf(yaw_offset + delta_x * 0.0012, deg_to_rad(-12.0), deg_to_rad(12.0))
+	yaw_offset = clampf(yaw_offset + delta_x * 0.0012, deg_to_rad(-13.0), deg_to_rad(7.0))
 	_apply()
 
 func zoom_by(delta: float) -> void:
-	zoom = clampf(zoom + delta, 0.92, 1.10)
+	zoom = clampf(zoom + delta, 0.94, 1.10)
 	_apply()
 
 func reset_view() -> void:
-	yaw_offset = 0.0
+	yaw_offset = deg_to_rad(-6.5)
 	zoom = 1.0
 	_apply()
 
@@ -44,8 +44,8 @@ func focus_capture(world_position: Vector3) -> Tween:
 	var original_position := camera.position
 	var original_fov := camera.fov
 	var focus := Vector3(world_position.x * 0.60, 0.88, world_position.z * 0.60)
-	var close_distance := 11.7 * zoom
-	var close_height := 6.9 * zoom
+	var close_distance := 11.55 * zoom
+	var close_height := 6.35 * zoom
 	var close_pos := Vector3(sin(yaw_offset) * close_distance, close_height, cos(yaw_offset) * close_distance)
 	camera.look_at(focus, Vector3.UP)
 
