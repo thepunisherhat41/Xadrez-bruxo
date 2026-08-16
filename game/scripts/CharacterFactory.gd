@@ -60,7 +60,7 @@ static func play_action(piece: Node3D, action: String) -> void:
 	var player := _find_animation_player(piece)
 	if player == null:
 		return
-	var hints: Array[String] = []
+	var hints: Array = []
 	match action:
 		"idle": hints = ["idle_weapon", "idle"]
 		"walk": hints = ["run_weapon", "walk", "run"]
@@ -92,8 +92,9 @@ static func _start_idle(character: Node3D, square: String) -> void:
 		var phase := float(abs(square.hash()) % 100) / 100.0
 		player.seek(animation.length * phase, true)
 
-static func _play_by_hints(player: AnimationPlayer, hints: Array[String], loop: bool) -> String:
-	for hint in hints:
+static func _play_by_hints(player: AnimationPlayer, hints: Array, loop: bool) -> String:
+	for hint_value in hints:
+		var hint := String(hint_value)
 		for animation_name in player.get_animation_list():
 			var lower := String(animation_name).to_lower()
 			if lower.contains(hint):
