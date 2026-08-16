@@ -23,7 +23,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 18
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +51,13 @@ jobs:
         run: |
           set -o pipefail
           bash game/tools/probe_itch.sh 2>&1 | tee itch-probe.log
+
+      - name: Download official current Quaternius Standard outfits
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bash game/tools/fetch_quaternius_current.sh /tmp/quaternius-current 2>&1 | tee quaternius-current.log
 
       - name: Import project and compile scripts
         shell: bash
@@ -110,4 +117,5 @@ jobs:
             cinematic-smoke.log
             cinematic-visual.log
             itch-probe.log
+            quaternius-current.log
           if-no-files-found: warn
