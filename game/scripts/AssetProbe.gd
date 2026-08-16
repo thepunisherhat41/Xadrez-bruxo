@@ -4,8 +4,8 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
-	_probe("res://assets/vendor/quaternius/Male_Ranger.gltf", "RANGER")
-	_probe("res://assets/vendor/quaternius/UAL1_Standard.glb", "UAL")
+	_probe("res://assets/vendor/quaternius/glTF/Warrior.gltf", "WARRIOR")
+	_probe("res://assets/vendor/quaternius/glTF/Wizard.gltf", "WIZARD")
 	quit(0)
 
 func _probe(path: String, label: String) -> void:
@@ -21,8 +21,6 @@ func _probe(path: String, label: String) -> void:
 		for name in player.get_animation_list():
 			var animation := player.get_animation(name)
 			print("ANIM ", name, " TRACKS=", animation.get_track_count())
-			for i in range(mini(animation.get_track_count(), 4)):
-				print("  TRACK ", i, " PATH=", animation.track_get_path(i))
 	root_node.free()
 
 func _print_tree(node: Node, depth: int) -> void:
