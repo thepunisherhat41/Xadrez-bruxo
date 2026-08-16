@@ -95,7 +95,7 @@ static func _build_board(parent: Node3D) -> Dictionary:
 static func _build_rune_channels(parent: Node3D) -> void:
 	var astral := _emissive(Color("#348fff"), 2.1)
 	var eclipse := _emissive(Color("#a34cff"), 2.15)
-	var outer := BOARD_SIZE * 0.5 + 0.72
+	var outer: float = BOARD_SIZE * 0.5 + 0.72
 	for i in range(2):
 		var ring := MeshInstance3D.new()
 		var torus := TorusMesh.new()
@@ -114,17 +114,19 @@ static func _build_side_architecture(parent: Node3D) -> void:
 	var metal := _material(Color("#3d414c"), 0.52, 0.62)
 	var astral := _emissive(Color("#488fff"), 2.5)
 	var eclipse := _emissive(Color("#8f45ff"), 2.5)
-	var side_x := BOARD_SIZE * 0.5 + 2.2
-	for side in [-1.0, 1.0]:
-		var x := side_x * side
-		for z in [-4.5, 0.0, 4.5]:
+	var side_x: float = BOARD_SIZE * 0.5 + 2.2
+	for side_value in [-1.0, 1.0]:
+		var side: float = float(side_value)
+		var x: float = side_x * side
+		for z_value in [-4.5, 0.0, 4.5]:
+			var z: float = float(z_value)
 			_box(parent, Vector3(x, 1.40, z), Vector3(0.75, 2.8, 0.75), stone)
 			_box(parent, Vector3(x, 2.86, z), Vector3(1.0, 0.16, 1.0), metal)
 			var crystal := MeshInstance3D.new()
 			var prism := PrismMesh.new()
 			prism.size = Vector3(0.48, 1.10, 0.48)
 			crystal.mesh = prism
-			crystal.material_override = astral if side < 0 else eclipse
+			crystal.material_override = astral if side < 0.0 else eclipse
 			crystal.position = Vector3(x, 3.58, z)
 			crystal.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			parent.add_child(crystal)
