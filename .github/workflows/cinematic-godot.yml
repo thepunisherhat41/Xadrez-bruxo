@@ -54,6 +54,15 @@ jobs:
             exit 1
           fi
 
+      - name: Inspect shared animation rig
+        shell: bash
+        run: |
+          set -o pipefail
+          "$GODOT_BIN" --headless --path game --script res://scripts/AssetProbe.gd 2>&1 | tee cinematic-asset-probe.log
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|FAILED LOAD' cinematic-asset-probe.log; then
+            exit 1
+          fi
+
       - name: Validate chess rules and offline AI
         shell: bash
         run: |
@@ -90,6 +99,7 @@ jobs:
           name: xadrez-bruxo-cinematic-logs
           path: |
             cinematic-import.log
+            cinematic-asset-probe.log
             cinematic-smoke.log
             cinematic-visual.log
           if-no-files-found: warn
