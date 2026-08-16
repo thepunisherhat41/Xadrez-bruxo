@@ -12,11 +12,11 @@ const MODEL_BY_KIND := {
 const PAWN_MODELS := ["Monk.gltf", "Rogue.gltf"]
 const CLASS_SCALE := {
 	"P": 0.74,
-	"R": 0.78,
-	"N": 0.76,
-	"B": 0.76,
-	"Q": 0.79,
-	"K": 0.82
+	"R": 0.80,
+	"N": 0.77,
+	"B": 0.77,
+	"Q": 0.83,
+	"K": 0.87
 }
 
 static func assets_ready() -> bool:
@@ -45,7 +45,8 @@ static func create_piece(code: String, square: String) -> Node3D:
 	character.name = "Character"
 	root.add_child(character)
 	character.scale = Vector3.ONE * float(CLASS_SCALE.get(kind, 0.76))
-	character.rotation.y = 0.0 if color == "w" else PI
+	# Models face -Z at rotation 0. White advances toward -Z and black toward +Z.
+	character.rotation.y = PI if color == "w" else 0.0
 	_enable_shadows(character)
 	_tint_character(character, color)
 	_start_idle(character, square)
@@ -59,17 +60,17 @@ static func play_action(piece: Node3D, action: String) -> void:
 		return
 	var hints: Array[String] = []
 	match action:
-		"idle": hints = ["idle"]
-		"walk": hints = ["walk", "run"]
-		"run": hints = ["run", "walk"]
+		"idle": hints = ["idle_weapon", "idle"]
+		"walk": hints = ["run_weapon", "walk", "run"]
+		"run": hints = ["run_weapon", "run", "walk"]
 		"attack":
 			var code := String(piece.get_meta("piece_code", "wP"))
 			var kind := code.substr(1, 1)
-			hints = ["spell", "attack"] if kind in ["B", "Q"] else ["attack", "slash", "sword", "punch"]
-		"hit": hints = ["hit", "damage", "impact"]
-		"death": hints = ["death", "die"]
+			hints = ["spell1", "spell2", "staff_attack"] if kind in ["B", "Q"] else ["sword_attack", "attack", "punch"]
+		"hit": hints = ["recievehit", "hit"]
+		"death": hints = ["death"]
 		_: hints = [action.to_lower()]
-	_play_by_hints(player, hints, action == "idle")
+	_play_by_hints(player, hints, action in ["idle", "walk", "run"])
 
 static func _model_for(kind: String, square: String) -> String:
 	if kind == "P":
@@ -81,7 +82,7 @@ static func _start_idle(character: Node3D, square: String) -> void:
 	var player := _find_animation_player(character)
 	if player == null:
 		return
-	var chosen := _play_by_hints(player, ["idle"], true)
+	var chosen := _play_by_hints(player, ["idle_weapon", "idle"], true)
 	if chosen.is_empty():
 		return
 	var animation: Animation = player.get_animation(chosen)
@@ -90,9 +91,9 @@ static func _start_idle(character: Node3D, square: String) -> void:
 		player.seek(animation.length * phase, true)
 
 static func _play_by_hints(player: AnimationPlayer, hints: Array[String], loop: bool) -> String:
-	for animation_name in player.get_animation_list():
-		var lower := String(animation_name).to_lower()
-		for hint in hints:
+	for hint in hints:
+		for animation_name in player.get_animation_list():
+			var lower := String(animation_name).to_lower()
 			if lower.contains(hint):
 				var animation: Animation = player.get_animation(animation_name)
 				if animation != null and loop:
@@ -135,9 +136,9 @@ static func _add_class_sigil(root: Node3D, color: String, kind: String) -> void:
 	var metal := Color("#c5a95d") if color == "w" else Color("#786090")
 	match kind:
 		"K":
-			_add_crown(root, Vector3(0, 2.05, 0), metal, accent, 5)
+			_add_crown(root, Vector3(0, 2.08, 0), metal, accent, 5)
 		"Q":
-			_add_crown(root, Vector3(0, 1.98, 0), metal, accent, 7)
+			_add_crown(root, Vector3(0, 2.00, 0), metal, accent, 7)
 			_add_orb(root, Vector3(0.42, 1.38, 0), 0.075, accent)
 		"B":
 			_add_orb(root, Vector3(0, 1.82, 0), 0.085, accent)
