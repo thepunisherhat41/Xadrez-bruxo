@@ -22,6 +22,14 @@ static func square_position(square: String) -> Vector3:
 		(3.5 - float(rank_index)) * STEP
 	)
 
+static func world_to_square(world: Vector3) -> String:
+	var file_index := int(floor((world.x + BOARD_SIZE * 0.5) / STEP))
+	var visual_rank := int(floor((world.z + BOARD_SIZE * 0.5) / STEP))
+	var rank_index := 7 - visual_rank
+	if file_index < 0 or file_index > 7 or rank_index < 0 or rank_index > 7:
+		return ""
+	return "abcdefgh".substr(file_index, 1) + str(rank_index + 1)
+
 static func _build_environment(parent: Node3D) -> void:
 	var world := WorldEnvironment.new()
 	var env := Environment.new()
@@ -63,8 +71,6 @@ static func _build_platform(parent: Node3D) -> void:
 	var edge := _material(Color("#4a4038"), 0.58, 0.46)
 	_box(parent, Vector3(0, -0.02, 0), Vector3(BOARD_SIZE + 2.4, 0.80, BOARD_SIZE + 2.4), stone)
 	_box(parent, Vector3(0, 0.34, 0), Vector3(BOARD_SIZE + 0.62, 0.18, BOARD_SIZE + 0.62), edge)
-
-	# Broad lower plinth; intentionally lower than camera sight-line.
 	_box(parent, Vector3(0, -0.58, 0), Vector3(BOARD_SIZE + 4.3, 0.36, BOARD_SIZE + 4.3), _material(Color("#0d0f16"), 0.95, 0.06))
 
 static func _build_board(parent: Node3D) -> Dictionary:
@@ -90,8 +96,6 @@ static func _build_rune_channels(parent: Node3D) -> void:
 	var astral := _emissive(Color("#348fff"), 2.1)
 	var eclipse := _emissive(Color("#a34cff"), 2.15)
 	var outer := BOARD_SIZE * 0.5 + 0.72
-
-	# TorusMesh already lies flat in XZ in Godot. Do not rotate it vertical.
 	for i in range(2):
 		var ring := MeshInstance3D.new()
 		var torus := TorusMesh.new()
@@ -102,8 +106,6 @@ static func _build_rune_channels(parent: Node3D) -> void:
 		ring.position.y = -0.22 - float(i) * 0.03
 		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		parent.add_child(ring)
-
-	# Thin faction channels stay at floor level and never cross camera view.
 	_box(parent, Vector3(-outer, -0.14, 0), Vector3(0.045, 0.028, BOARD_SIZE * 0.72), astral)
 	_box(parent, Vector3(outer, -0.14, 0), Vector3(0.045, 0.028, BOARD_SIZE * 0.72), eclipse)
 
@@ -113,9 +115,6 @@ static func _build_side_architecture(parent: Node3D) -> void:
 	var astral := _emissive(Color("#488fff"), 2.5)
 	var eclipse := _emissive(Color("#8f45ff"), 2.5)
 	var side_x := BOARD_SIZE * 0.5 + 2.2
-
-	# Architecture only on lateral edges. Nothing is placed at +Z or -Z between
-	# the tactical camera and the board.
 	for side in [-1.0, 1.0]:
 		var x := side_x * side
 		for z in [-4.5, 0.0, 4.5]:
