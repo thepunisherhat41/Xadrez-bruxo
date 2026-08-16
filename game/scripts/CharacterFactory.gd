@@ -84,7 +84,7 @@ static func _start_idle(character: Node3D, square: String) -> void:
 	var chosen := _play_by_hints(player, ["idle"], true)
 	if chosen.is_empty():
 		return
-	var animation := player.get_animation(chosen)
+	var animation: Animation = player.get_animation(chosen)
 	if animation != null and animation.length > 0.05:
 		var phase := float(abs(square.hash()) % 100) / 100.0
 		player.seek(animation.length * phase, true)
@@ -94,7 +94,7 @@ static func _play_by_hints(player: AnimationPlayer, hints: Array[String], loop: 
 		var lower := String(animation_name).to_lower()
 		for hint in hints:
 			if lower.contains(hint):
-				var animation := player.get_animation(animation_name)
+				var animation: Animation = player.get_animation(animation_name)
 				if animation != null and loop:
 					animation.loop_mode = Animation.LOOP_LINEAR
 				player.play(animation_name, 0.10)
@@ -105,10 +105,10 @@ static func _tint_character(node: Node, color: String) -> void:
 	if node is MeshInstance3D:
 		var mesh_instance := node as MeshInstance3D
 		if mesh_instance.mesh != null:
-			var copy := mesh_instance.mesh.duplicate(true)
-			var tint := Color(0.88, 0.95, 1.0, 1.0) if color == "w" else Color(0.66, 0.52, 0.78, 1.0)
+			var copy: Mesh = mesh_instance.mesh.duplicate(true) as Mesh
+			var tint: Color = Color(0.88, 0.95, 1.0, 1.0) if color == "w" else Color(0.66, 0.52, 0.78, 1.0)
 			for surface in range(copy.get_surface_count()):
-				var material := copy.surface_get_material(surface)
+				var material: Material = copy.surface_get_material(surface)
 				if material is StandardMaterial3D:
 					var adjusted := material.duplicate(true) as StandardMaterial3D
 					adjusted.albedo_color = adjusted.albedo_color * tint
