@@ -1,0 +1,95 @@
+name: Cinematic Godot Rebuild
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'game/**'
+      - '.github/workflows/cinematic-godot.yml'
+  push:
+    branches:
+      - agent/godot-cinematic-rebuild
+    paths:
+      - 'game/**'
+      - '.github/workflows/cinematic-godot.yml'
+
+concurrency:
+  group: cinematic-godot-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Godot 4.7.1 stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o /tmp/godot.zip \
+            https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          GODOT_BIN="$(find /tmp/godot -maxdepth 1 -type f -name 'Godot*' | head -1)"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          "$GODOT_BIN" --version
+
+      - name: Stage audited adult fantasy assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash game/tools/fetch_visual_assets.sh
+
+      - name: Import project and compile scripts
+        shell: bash
+        run: |
+          set -o pipefail
+          "$GODOT_BIN" --headless --path game --editor --quit 2>&1 | tee cinematic-import.log
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|Failed to load script' cinematic-import.log; then
+            exit 1
+          fi
+
+      - name: Validate chess rules and offline AI
+        shell: bash
+        run: |
+          set -o pipefail
+          "$GODOT_BIN" --headless --path game --script res://scripts/SmokeTest.gd 2>&1 | tee cinematic-smoke.log
+          grep -Fq 'CINEMATIC CHESS SMOKE: PASS' cinematic-smoke.log
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|SMOKE FAIL' cinematic-smoke.log; then
+            exit 1
+          fi
+
+      - name: Render mandatory landscape gameplay reference
+        shell: bash
+        run: |
+          set -o pipefail
+          export LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a "$GODOT_BIN" --audio-driver Dummy --path game --script res://scripts/VisualCapture.gd 2>&1 | tee cinematic-visual.log
+          grep -Fq 'CINEMATIC VISUAL: PASS' cinematic-visual.log
+          test -s game/build/visual/gameplay-landscape.png
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|VISUAL CONTRACT FAIL' cinematic-visual.log; then
+            exit 1
+          fi
+
+      - name: Upload gameplay reference
+        uses: actions/upload-artifact@v4
+        with:
+          name: xadrez-bruxo-cinematic-reference
+          path: game/build/visual/gameplay-landscape.png
+          if-no-files-found: error
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xadrez-bruxo-cinematic-logs
+          path: |
+            cinematic-import.log
+            cinematic-smoke.log
+            cinematic-visual.log
+          if-no-files-found: warn
