@@ -45,13 +45,6 @@ jobs:
           set -euo pipefail
           bash game/tools/fetch_visual_assets.sh
 
-      - name: Probe RPG wizard knight ranger assassin monk pack
-        shell: bash
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          bash game/tools/fetch_rpg_characters.sh /tmp/quaternius-rpg 2>&1 | tee rpg-characters.log
-
       - name: Import project and compile scripts
         shell: bash
         run: |
@@ -61,7 +54,7 @@ jobs:
             exit 1
           fi
 
-      - name: Inspect shared animation rig
+      - name: Inspect embedded combat animations
         shell: bash
         run: |
           set -o pipefail
@@ -92,11 +85,23 @@ jobs:
             exit 1
           fi
 
-      - name: Upload gameplay reference
+      - name: Render a real Wizard vs Warrior capture duel
+        shell: bash
+        run: |
+          set -o pipefail
+          export LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a "$GODOT_BIN" --audio-driver Dummy --path game --script res://scripts/BattleCapture.gd 2>&1 | tee cinematic-battle.log
+          grep -Fq 'CINEMATIC BATTLE: PASS' cinematic-battle.log
+          test -s game/build/visual/capture-duel.png
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|BATTLE CONTRACT FAIL' cinematic-battle.log; then
+            exit 1
+          fi
+
+      - name: Upload visual review set
         uses: actions/upload-artifact@v4
         with:
           name: xadrez-bruxo-cinematic-reference
-          path: game/build/visual/gameplay-landscape.png
+          path: game/build/visual/
           if-no-files-found: error
 
       - name: Upload validation logs
@@ -109,5 +114,5 @@ jobs:
             cinematic-asset-probe.log
             cinematic-smoke.log
             cinematic-visual.log
-            rpg-characters.log
+            cinematic-battle.log
           if-no-files-found: warn
