@@ -2,93 +2,53 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CACHE="$ROOT/.asset-cache/ffxi-browser"
 TARGET="$ROOT/assets/vendor/quaternius"
-PIN="d65cd213cffb9c0ef17e3f70a6a46ea82ba47dfa"
-REMOTE="https://github.com/lord3nd3r/ffxi-browser.git"
+CACHE="$ROOT/.asset-cache/rpg-pack"
+FOLDER="https://drive.google.com/drive/folders/1MIRQXLfTd21HMI5rwOb6Xy0rv0xv1m8b"
 
-rm -rf "$CACHE" "$TARGET"
-mkdir -p "$(dirname "$CACHE")" "$TARGET"
+rm -rf "$TARGET" "$CACHE"
+mkdir -p "$TARGET" "$CACHE"
+python3 -m pip install -q gdown==6.1.0
 
-git init -q "$CACHE"
-git -C "$CACHE" remote add origin "$REMOTE"
-git -C "$CACHE" fetch -q --depth 1 origin "$PIN"
-git -C "$CACHE" checkout -q FETCH_HEAD
+gdown "$FOLDER" --folder --json --quiet > "$CACHE/manifest.json"
 
-cp -R "$CACHE/public/models/chars/." "$TARGET/"
+jq -r '
+  .[]
+  | select(
+      (.path | test("^glTF/(Cleric|Monk|Ranger|Rogue|Warrior|Wizard)\\.gltf$"))
+      or (.path | test("^Textures/.*\\.png$"; "i"))
+      or (.path | test("License\\.txt$"; "i"))
+    )
+  | [.url, .path] | @tsv
+' "$CACHE/manifest.json" > "$CACHE/selected.tsv"
 
-# The deterministic mirror keeps BaseColor maps but omits some technical maps
-# referenced by the original glTF files. Create tiny neutral maps so Godot can
-# import the scenes without broken texture references. They do not replace the
-# visible BaseColor artwork.
-TARGET="$TARGET" python3 - <<'PY'
-from pathlib import Path
-import os, struct, zlib
+while IFS=$'\t' read -r url rel; do
+  [[ -n "$url" && -n "$rel" ]] || continue
+  mkdir -p "$TARGET/$(dirname "$rel")"
+  gdown "$url" -O "$TARGET/$rel" --quiet
+done < "$CACHE/selected.tsv"
 
-root = Path(os.environ["TARGET"])
+for required in Cleric Monk Ranger Rogue Warrior Wizard; do
+  test -s "$TARGET/glTF/$required.gltf"
+done
 
-def chunk(kind: bytes, data: bytes) -> bytes:
-    body = kind + data
-    crc = zlib.crc32(body) & 0xFFFFFFFF
-    return struct.pack(">I", len(data)) + body + struct.pack(">I", crc)
+cat > "$TARGET/PROVENANCE.md" <<'EOF'
+# Quaternius RPG Character Pack
 
-def write_png(name: str, rgba: tuple[int, int, int, int]):
-    path = root / name
-    if path.exists():
-        return
-    width = height = 4
-    raw = b"".join(b"\x00" + bytes(rgba) * width for _ in range(height))
-    png = b"\x89PNG\r\n\x1a\n"
-    png += chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
-    png += chunk(b"IDAT", zlib.compress(raw, 9))
-    png += chunk(b"IEND", b"")
-    path.write_bytes(png)
+Official pack: https://quaternius.com/packs/rpgcharacters.html
+Official public Drive folder: https://drive.google.com/drive/folders/1MIRQXLfTd21HMI5rwOb6Xy0rv0xv1m8b
+License: CC0 1.0
 
-normal = (128, 128, 255, 255)
-rough = (220, 220, 220, 255)
-orm = (255, 205, 0, 255)
+Selected runtime characters:
+- Cleric
+- Monk
+- Ranger
+- Rogue
+- Warrior
+- Wizard
 
-for name in [
-    "T_Hair_1_Normal_png.png",
-    "T_Hair_2_Normal.png",
-    "T_Eye_Normal_png.png",
-    "T_Superhero_Male_Normal.png",
-    "T_Superhero_Female_Normal.png",
-    "T_Ranger_Normal.png",
-    "T_Regular_Male_Normal.png",
-    "T_Regular_Female_Normal.png",
-    "T_Peasant_Normal.png",
-]:
-    write_png(name, normal)
-
-for name in [
-    "T_Superhero_Male_Roughness.png",
-    "T_Superhero_Female_Roughness.png",
-    "T_Regular_Male_Roughness.png",
-    "T_Regular_Female_Roughness.png",
-]:
-    write_png(name, rough)
-
-for name in ["T_Ranger_ORM.png", "T_Peasant_ORM.png"]:
-    write_png(name, orm)
-PY
-
-cat > "$TARGET/PROVENANCE.md" <<EOF
-# Third-party visual assets
-
-Character bases/outfits and the Universal Animation Library are Quaternius assets distributed under CC0 1.0.
-
-Official sources:
-- https://quaternius.com/packs/universalbasecharacters.html
-- https://quaternius.com/packs/modularcharacteroutfitsfantasy.html
-- https://quaternius.com/packs/universalanimationlibrary.html
-
-Build mirror used for deterministic CI staging:
-- https://github.com/lord3nd3r/ffxi-browser
-- pinned commit: $PIN
-
-The mirror carries the visible BaseColor textures and character geometry. Missing neutral normal/roughness/ORM technical maps are generated locally at build time solely to satisfy the original glTF references; no visible copyrighted artwork is synthesized or substituted.
+Only the six glTF character files and their texture folder are staged into the build. They are downloaded from the creator's public Drive at build time and are not committed into this repository.
 EOF
 
-printf 'Staged visual assets: '
-find "$TARGET" -type f | wc -l
+printf 'Staged RPG visual assets:\n'
+find "$TARGET" -type f -printf '%P %k KB\n' | sort
