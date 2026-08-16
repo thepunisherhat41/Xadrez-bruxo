@@ -13,7 +13,7 @@ func _capture() -> void:
 	await process_frame
 	await process_frame
 	game.call("_start_offline", "offline_ai")
-	await create_timer(1.25).timeout
+	await create_timer(1.65).timeout
 
 	var pieces: Dictionary = game.get("pieces")
 	if pieces.size() != 32:
@@ -27,7 +27,6 @@ func _capture() -> void:
 		_fail("visual validation is not landscape")
 		return
 
-	# Verify that all four board corners remain inside the gameplay viewport.
 	var corners := ["a1", "h1", "a8", "h8"]
 	for square in corners:
 		var screen := camera.unproject_position(Arena.square_position(square))
