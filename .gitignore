@@ -10,4 +10,5 @@ npm-debug.log*
 game/.godot/
 game/.asset-cache/
 game/assets/vendor/quaternius/
+game/assets/vendor/rpg/
 game/build/
