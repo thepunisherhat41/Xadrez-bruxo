@@ -1,18 +1,28 @@
 extends SceneTree
 
+var failures := 0
+
 func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
-	_probe("res://assets/vendor/quaternius/glTF/Warrior.gltf", "MECHANICS_WARRIOR")
-	_probe("res://assets/vendor/pbr/ShadowkinMage.glb", "PBR_SHADOWKIN_MAGE")
+	_probe("res://assets/vendor/quaternius/glTF/Warrior.gltf", "MECHANICS_WARRIOR", false)
+	_probe("res://assets/vendor/pbr/ShadowkinMage.glb", "PBR_SHADOWKIN_MAGE", true)
+	_probe("res://assets/vendor/pbr/ForgottenKnight.glb", "PBR_FORGOTTEN_KNIGHT", true)
+	if failures > 0:
+		print("ASSET PROBE: FAIL count=", failures)
+		quit(1)
+		return
+	print("ASSET PROBE: PASS PBR_MAGE=true PBR_KNIGHT=true")
 	quit(0)
 
-func _probe(path: String, label: String) -> void:
+func _probe(path: String, label: String, required: bool) -> void:
 	print("=== PROBE %s ===" % label)
 	var packed := load(path) as PackedScene
 	if packed == null:
 		print("FAILED LOAD ", path)
+		if required:
+			failures += 1
 		return
 	var root_node := packed.instantiate()
 	root.add_child(root_node)
@@ -26,6 +36,9 @@ func _probe(path: String, label: String) -> void:
 			print("ANIM ", name, " TRACKS=", animation.get_track_count(), " LENGTH=", animation.length)
 	var mesh_stats := _mesh_stats(root_node)
 	print("MESH_STATS surfaces=", mesh_stats["surfaces"], " vertices=", mesh_stats["vertices"], " animations=", animation_count)
+	if required and (int(mesh_stats["surfaces"]) <= 0 or int(mesh_stats["vertices"]) <= 0):
+		print("FAILED EMPTY MODEL ", path)
+		failures += 1
 	root.remove_child(root_node)
 	root_node.free()
 
