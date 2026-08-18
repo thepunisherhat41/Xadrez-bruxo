@@ -11,4 +11,5 @@ game/.godot/
 game/.asset-cache/
 game/assets/vendor/quaternius/
 game/assets/vendor/rpg/
+game/assets/vendor/pbr/
 game/build/
