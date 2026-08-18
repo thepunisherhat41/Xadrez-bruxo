@@ -23,7 +23,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +51,9 @@ jobs:
           set -o pipefail
           bash game/tools/stage_pbr_vertical_slice.sh 2>&1 | tee pbr-assets.log
           test -s game/assets/vendor/pbr/ShadowkinMage.glb
+          test -s game/assets/vendor/pbr/ForgottenKnight.glb
+          grep -Fq 'ShadowkinMage.glb' pbr-assets.log
+          grep -Fq 'ForgottenKnight.glb' pbr-assets.log
 
       - name: Import project and compile scripts
         shell: bash
@@ -61,12 +64,13 @@ jobs:
             exit 1
           fi
 
-      - name: Inspect embedded combat animations
+      - name: Inspect embedded combat assets
         shell: bash
         run: |
           set -o pipefail
           "$GODOT_BIN" --headless --path game --script res://scripts/AssetProbe.gd 2>&1 | tee cinematic-asset-probe.log
-          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|FAILED LOAD' cinematic-asset-probe.log; then
+          grep -Fq 'ASSET PROBE: PASS PBR_MAGE=true PBR_KNIGHT=true' cinematic-asset-probe.log
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|FAILED LOAD|FAILED EMPTY MODEL|ASSET PROBE: FAIL' cinematic-asset-probe.log; then
             exit 1
           fi
 
@@ -92,13 +96,15 @@ jobs:
             exit 1
           fi
 
-      - name: Render high-fidelity combat gate
+      - name: Render PBR-vs-PBR combat gate
         shell: bash
         run: |
           set -o pipefail
           export LIBGL_ALWAYS_SOFTWARE=1
           xvfb-run -a "$GODOT_BIN" --audio-driver Dummy --path game --script res://scripts/BattleCapture.gd 2>&1 | tee cinematic-battle.log
-          grep -Fq 'CINEMATIC BATTLE: PASS' cinematic-battle.log
+          grep -Fq 'CINEMATIC BATTLE: PASS PBR_MAGE=true PBR_KNIGHT=true' cinematic-battle.log
+          test -s game/build/visual/capture-pbr-mage.png
+          test -s game/build/visual/capture-pbr-knight.png
           test -s game/build/visual/capture-duel.png
           if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|BATTLE CONTRACT FAIL' cinematic-battle.log; then
             exit 1
