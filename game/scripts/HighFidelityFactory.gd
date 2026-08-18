@@ -2,15 +2,26 @@ class_name HighFidelityFactory
 extends RefCounted
 
 const SHADOWKIN_PATH := "res://assets/vendor/pbr/ShadowkinMage.glb"
+const FORGOTTEN_KNIGHT_PATH := "res://assets/vendor/pbr/ForgottenKnight.glb"
 const TARGET_MAGE_HEIGHT := 2.10
+const TARGET_KNIGHT_HEIGHT := 2.24
 
 static func mage_ready() -> bool:
 	return ResourceLoader.exists(SHADOWKIN_PATH)
 
+static func knight_ready() -> bool:
+	return ResourceLoader.exists(FORGOTTEN_KNIGHT_PATH)
+
 static func create_shadowkin(code: String) -> Node3D:
-	if not mage_ready():
+	return _create_imported_piece(SHADOWKIN_PATH, code, TARGET_MAGE_HEIGHT, "shadowkin")
+
+static func create_forgotten_knight(code: String) -> Node3D:
+	return _create_imported_piece(FORGOTTEN_KNIGHT_PATH, code, TARGET_KNIGHT_HEIGHT, "forgotten_knight")
+
+static func _create_imported_piece(path: String, code: String, target_height: float, archetype: String) -> Node3D:
+	if not ResourceLoader.exists(path):
 		return null
-	var packed := ResourceLoader.load(SHADOWKIN_PATH) as PackedScene
+	var packed := ResourceLoader.load(path) as PackedScene
 	if packed == null:
 		return null
 	var imported := packed.instantiate() as Node3D
@@ -18,38 +29,64 @@ static func create_shadowkin(code: String) -> Node3D:
 		return null
 
 	var root := Node3D.new()
-	root.name = "PBR_Shadowkin_%s" % code
+	root.name = "PBR_%s_%s" % [archetype, code]
 	root.set_meta("piece_code", code)
 	root.set_meta("high_fidelity", true)
+	root.set_meta("archetype", archetype)
+	root.set_meta("source_path", path)
 	root.add_child(imported)
 
-	# Normalize independently from whatever source-unit convention the asset used.
+	# Normalize independently from whatever unit convention the source used.
+	# This is intentionally done before the piece enters the arena so the art
+	# gate compares silhouette/material quality rather than arbitrary authoring
+	# scale or pivot choices.
 	var bounds := _combined_bounds(imported, imported)
-	if bounds.size.y > 0.001:
-		var uniform := TARGET_MAGE_HEIGHT / bounds.size.y
-		imported.scale = Vector3.ONE * uniform
-		# Recenter feet at y=0 and horizontal center at the piece origin.
-		var scaled_pos := bounds.position * uniform
-		var scaled_size := bounds.size * uniform
-		imported.position = Vector3(
-			-(scaled_pos.x + scaled_size.x * 0.5),
-			-scaled_pos.y,
-			-(scaled_pos.z + scaled_size.z * 0.5)
-		)
+	if bounds.size.y <= 0.001:
+		root.free()
+		return null
+
+	var uniform := target_height / bounds.size.y
+	imported.scale = Vector3.ONE * uniform
+
+	# Recenter feet at y=0 and horizontal center at the piece origin.
+	var scaled_pos := bounds.position * uniform
+	var scaled_size := bounds.size * uniform
+	imported.position = Vector3(
+		-(scaled_pos.x + scaled_size.x * 0.5),
+		-scaled_pos.y,
+		-(scaled_pos.z + scaled_size.z * 0.5)
+	)
 
 	var faction := code.substr(0, 1)
+	# White and black face one another. Source forward axes can vary, so the
+	# close-up gate below remains the authority for any per-model correction.
 	imported.rotation.y = PI if faction == "w" else 0.0
 	_enable_shadows(imported)
 	_pose_for_combat(imported)
 	_add_premium_base(root, faction)
+
+	root.set_meta("source_height", bounds.size.y)
+	root.set_meta("normalization_scale", uniform)
+	root.set_meta("target_height", target_height)
 	return root
 
 static func _pose_for_combat(node: Node) -> void:
 	var player := _find_animation_player(node)
 	if player == null:
 		return
-	for animation_name in player.get_animation_list():
-		if String(animation_name).to_lower().contains("actionpose"):
+
+	# Prefer explicit action poses; otherwise use a non-reset pose if one exists.
+	var names := player.get_animation_list()
+	for animation_name in names:
+		var lowered := String(animation_name).to_lower()
+		if lowered.contains("actionpose") or lowered.contains("action_pose") or lowered.contains("combat"):
+			player.play(animation_name)
+			player.seek(0.0, true)
+			player.pause()
+			return
+	for animation_name in names:
+		var lowered := String(animation_name).to_lower()
+		if lowered == "pose" or lowered.contains("idle"):
 			player.play(animation_name)
 			player.seek(0.0, true)
 			player.pause()
