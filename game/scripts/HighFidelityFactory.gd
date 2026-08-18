@@ -34,38 +34,42 @@ static func _create_imported_piece(path: String, code: String, target_height: fl
 	root.set_meta("high_fidelity", true)
 	root.set_meta("archetype", archetype)
 	root.set_meta("source_path", path)
-	root.add_child(imported)
 
-	# Normalize independently from whatever unit convention the source used.
-	# This is intentionally done before the piece enters the arena so the art
-	# gate compares silhouette/material quality rather than arbitrary authoring
-	# scale or pivot choices.
-	var bounds := _combined_bounds(imported, imported)
+	# Keep source-authored transforms intact. The normalizer is a separate parent
+	# so imported GLBs can retain their own unit scale, pivots and nested rig data.
+	var facing := Node3D.new()
+	facing.name = "Facing"
+	root.add_child(facing)
+	var normalizer := Node3D.new()
+	normalizer.name = "Normalizer"
+	facing.add_child(normalizer)
+	normalizer.add_child(imported)
+
+	# Calculate bounds entirely from local transforms. The previous implementation
+	# asked orphaned nodes for global_transform before they entered SceneTree,
+	# causing Godot to return identity transforms and corrupting normalization.
+	var bounds := _combined_local_bounds(imported, Transform3D.IDENTITY)
 	if bounds.size.y <= 0.001:
 		root.free()
 		return null
 
 	var uniform := target_height / bounds.size.y
-	imported.scale = Vector3.ONE * uniform
-
-	# Recenter feet at y=0 and horizontal center at the piece origin.
-	var scaled_pos := bounds.position * uniform
-	var scaled_size := bounds.size * uniform
-	imported.position = Vector3(
-		-(scaled_pos.x + scaled_size.x * 0.5),
-		-scaled_pos.y,
-		-(scaled_pos.z + scaled_size.z * 0.5)
-	)
+	var center_x := bounds.position.x + bounds.size.x * 0.5
+	var center_z := bounds.position.z + bounds.size.z * 0.5
+	var bottom_y := bounds.position.y
+	normalizer.scale = Vector3.ONE * uniform
+	normalizer.position = Vector3(-center_x * uniform, -bottom_y * uniform, -center_z * uniform)
 
 	var faction := code.substr(0, 1)
-	# White and black face one another. Source forward axes can vary, so the
-	# close-up gate below remains the authority for any per-model correction.
-	imported.rotation.y = PI if faction == "w" else 0.0
+	# White and black face one another without touching the source model transform.
+	facing.rotation.y = PI if faction == "w" else 0.0
 	_enable_shadows(imported)
 	_pose_for_combat(imported)
 	_add_premium_base(root, faction)
 
 	root.set_meta("source_height", bounds.size.y)
+	root.set_meta("source_width", bounds.size.x)
+	root.set_meta("source_depth", bounds.size.z)
 	root.set_meta("normalization_scale", uniform)
 	root.set_meta("target_height", target_height)
 	return root
@@ -92,25 +96,26 @@ static func _pose_for_combat(node: Node) -> void:
 			player.pause()
 			return
 
-static func _combined_bounds(node: Node, basis_root: Node3D) -> AABB:
-	var first := true
+static func _combined_local_bounds(node: Node3D, parent_transform: Transform3D) -> AABB:
+	var current_transform := parent_transform * node.transform
+	var has_bounds := false
 	var result := AABB()
+
 	if node is MeshInstance3D:
 		var mesh_node := node as MeshInstance3D
 		if mesh_node.mesh != null:
-			var relative := basis_root.global_transform.affine_inverse() * mesh_node.global_transform
-			var box := relative * mesh_node.get_aabb()
-			result = box
-			first = false
+			result = current_transform * mesh_node.get_aabb()
+			has_bounds = result.size.length_squared() > 0.000001
+
 	for child in node.get_children():
 		if not child is Node3D:
 			continue
-		var child_box := _combined_bounds(child, basis_root)
+		var child_box := _combined_local_bounds(child as Node3D, current_transform)
 		if child_box.size.length_squared() <= 0.000001:
 			continue
-		if first:
+		if not has_bounds:
 			result = child_box
-			first = false
+			has_bounds = true
 		else:
 			result = result.merge(child_box)
 	return result
