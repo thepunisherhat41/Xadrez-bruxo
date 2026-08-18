@@ -106,7 +106,7 @@ jobs:
           test -s game/build/visual/capture-pbr-mage.png
           test -s game/build/visual/capture-pbr-knight.png
           test -s game/build/visual/capture-duel.png
-          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|BATTLE CONTRACT FAIL' cinematic-battle.log; then
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|BATTLE CONTRACT FAIL|Condition "!is_inside_tree\(\)"|get_global_transform \(scene/3d/node_3d.cpp' cinematic-battle.log; then
             exit 1
           fi
 
