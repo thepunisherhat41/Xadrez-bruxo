@@ -5,6 +5,7 @@ const SHADOWKIN_PATH := "res://assets/vendor/pbr/ShadowkinMage.glb"
 const FORGOTTEN_KNIGHT_PATH := "res://assets/vendor/pbr/ForgottenKnight.glb"
 const TARGET_MAGE_HEIGHT := 2.10
 const TARGET_KNIGHT_HEIGHT := 2.24
+const RIG_BOUNDS_RATIO := 1.75
 
 static func mage_ready() -> bool:
 	return ResourceLoader.exists(SHADOWKIN_PATH)
@@ -36,7 +37,7 @@ static func _create_imported_piece(path: String, code: String, target_height: fl
 	root.set_meta("source_path", path)
 
 	# Keep source-authored transforms intact. The normalizer is a separate parent
-	# so imported GLBs can retain their own unit scale, pivots and nested rig data.
+	# so imported GLBs retain source scale, pivots, skin and nested rig data.
 	var facing := Node3D.new()
 	facing.name = "Facing"
 	root.add_child(facing)
@@ -45,13 +46,25 @@ static func _create_imported_piece(path: String, code: String, target_height: fl
 	facing.add_child(normalizer)
 	normalizer.add_child(imported)
 
-	# Calculate bounds entirely from local transforms. The previous implementation
-	# asked orphaned nodes for global_transform before they entered SceneTree,
-	# causing Godot to return identity transforms and corrupting normalization.
-	var bounds := _combined_local_bounds(imported, Transform3D.IDENTITY)
-	if bounds.size.y <= 0.001:
+	var mesh_bounds := _combined_local_bounds(imported, Transform3D.IDENTITY)
+	if mesh_bounds.size.y <= 0.001:
 		root.free()
 		return null
+
+	# A skinned GLB can report a mesh AABB in bind/object space that has little
+	# relationship to the posed character. Shadowkin is a concrete example: its
+	# imported mesh AABB is ~0.41 high while the 152-bone rest rig is ~1.92 high.
+	# In that case normalizing from the mesh made the runtime character ~5x too
+	# large and displaced. Prefer the skeleton rest envelope only when it is
+	# clearly more representative; ordinary/static assets keep mesh bounds.
+	var rig_probe := _largest_skeleton_rest_bounds(imported, Transform3D.IDENTITY)
+	var rig_bounds: AABB = rig_probe.get("bounds", AABB())
+	var use_rig_bounds := (
+		rig_bounds.size.y > 0.001
+		and rig_bounds.size.y > mesh_bounds.size.y * RIG_BOUNDS_RATIO
+	)
+	var bounds := rig_bounds if use_rig_bounds else mesh_bounds
+	var normalization_basis := "skeleton_rest" if use_rig_bounds else "mesh"
 
 	var uniform := target_height / bounds.size.y
 	var center_x := bounds.position.x + bounds.size.x * 0.5
@@ -61,7 +74,6 @@ static func _create_imported_piece(path: String, code: String, target_height: fl
 	normalizer.position = Vector3(-center_x * uniform, -bottom_y * uniform, -center_z * uniform)
 
 	var faction := code.substr(0, 1)
-	# White and black face one another without touching the source model transform.
 	facing.rotation.y = PI if faction == "w" else 0.0
 	_enable_shadows(imported)
 	_pose_for_combat(imported)
@@ -70,6 +82,9 @@ static func _create_imported_piece(path: String, code: String, target_height: fl
 	root.set_meta("source_height", bounds.size.y)
 	root.set_meta("source_width", bounds.size.x)
 	root.set_meta("source_depth", bounds.size.z)
+	root.set_meta("mesh_source_height", mesh_bounds.size.y)
+	root.set_meta("rig_source_height", rig_bounds.size.y)
+	root.set_meta("normalization_basis", normalization_basis)
 	root.set_meta("normalization_scale", uniform)
 	root.set_meta("target_height", target_height)
 	return root
@@ -78,8 +93,6 @@ static func _pose_for_combat(node: Node) -> void:
 	var player := _find_animation_player(node)
 	if player == null:
 		return
-
-	# Prefer explicit action poses; otherwise use a non-reset pose if one exists.
 	var names := player.get_animation_list()
 	for animation_name in names:
 		var lowered := String(animation_name).to_lower()
@@ -100,13 +113,11 @@ static func _combined_local_bounds(node: Node3D, parent_transform: Transform3D) 
 	var current_transform := parent_transform * node.transform
 	var has_bounds := false
 	var result := AABB()
-
 	if node is MeshInstance3D:
 		var mesh_node := node as MeshInstance3D
 		if mesh_node.mesh != null:
 			result = current_transform * mesh_node.get_aabb()
 			has_bounds = result.size.length_squared() > 0.000001
-
 	for child in node.get_children():
 		if not child is Node3D:
 			continue
@@ -119,6 +130,44 @@ static func _combined_local_bounds(node: Node3D, parent_transform: Transform3D) 
 		else:
 			result = result.merge(child_box)
 	return result
+
+static func _largest_skeleton_rest_bounds(node: Node3D, parent_transform: Transform3D) -> Dictionary:
+	var current_transform := parent_transform * node.transform
+	var best_bounds := AABB()
+	var best_bones := 0
+	if node is Skeleton3D:
+		var skeleton := node as Skeleton3D
+		var candidate := _skeleton_rest_bounds(skeleton, current_transform)
+		if candidate.size.y > best_bounds.size.y:
+			best_bounds = candidate
+			best_bones = skeleton.get_bone_count()
+	for child in node.get_children():
+		if not child is Node3D:
+			continue
+		var child_probe := _largest_skeleton_rest_bounds(child as Node3D, current_transform)
+		var child_bounds: AABB = child_probe.get("bounds", AABB())
+		if child_bounds.size.y > best_bounds.size.y:
+			best_bounds = child_bounds
+			best_bones = int(child_probe.get("bones", 0))
+	return {"bounds": best_bounds, "bones": best_bones}
+
+static func _skeleton_rest_bounds(skeleton: Skeleton3D, skeleton_transform: Transform3D) -> AABB:
+	var bone_count := skeleton.get_bone_count()
+	if bone_count <= 0:
+		return AABB()
+	var global_rests: Array[Transform3D] = []
+	global_rests.resize(bone_count)
+	var minimum := Vector3(INF, INF, INF)
+	var maximum := Vector3(-INF, -INF, -INF)
+	for index in range(bone_count):
+		var rest := skeleton.get_bone_rest(index)
+		var parent := skeleton.get_bone_parent(index)
+		var global_rest := rest if parent < 0 else global_rests[parent] * rest
+		global_rests[index] = global_rest
+		var point := skeleton_transform * global_rest.origin
+		minimum = minimum.min(point)
+		maximum = maximum.max(point)
+	return AABB(minimum, maximum - minimum)
 
 static func _find_animation_player(node: Node) -> AnimationPlayer:
 	if node is AnimationPlayer:
