@@ -1,8 +1,8 @@
 extends SceneTree
 
-const DUEL_FEN := "4k3/8/8/4n3/4Q3/8/8/4K3 w - - 0 1"
-const MAGE_SQUARE := "e4"
-const KNIGHT_SQUARE := "e5"
+const DUEL_FEN := "4k3/8/8/5n2/3Q4/8/8/4K3 w - - 0 1"
+const MAGE_SQUARE := "d4"
+const KNIGHT_SQUARE := "f5"
 
 var output_dir := ""
 
@@ -19,15 +19,15 @@ func _capture() -> void:
 	await process_frame
 	await process_frame
 
-	# Keep the real game shell, arena and HUD, but replace exactly two combatants
-	# with high-fidelity PBR candidates. The visual gate is intentionally tiny:
-	# prove one premium duel before multiplying an art mistake across 32 pieces.
+	# Reuse the real arena/world, but make this an art-direction gate rather than
+	# a gameplay screenshot. Chess state still contains kings for legality; every
+	# procedural runtime character is removed visually before the PBR candidates
+	# are added, so old low-poly art can never contaminate this evidence.
 	game.call("_start_offline", "offline_local", DUEL_FEN)
 	await create_timer(0.35).timeout
 
 	var pieces: Dictionary = game.get("pieces")
-	_remove_runtime_piece(pieces, MAGE_SQUARE)
-	_remove_runtime_piece(pieces, KNIGHT_SQUARE)
+	_clear_runtime_pieces(pieces)
 	await process_frame
 
 	var mage := HighFidelityFactory.create_shadowkin("wQ")
@@ -37,6 +37,12 @@ func _capture() -> void:
 	var knight := HighFidelityFactory.create_forgotten_knight("bN")
 	if knight == null:
 		_fail("PBR Forgotten Knight did not instantiate")
+		return
+
+	_validate_candidate(mage, "shadowkin")
+	_validate_candidate(knight, "forgotten_knight")
+	if String(mage.get_meta("source_path", "")) == String(knight.get_meta("source_path", "")):
+		_fail("PBR candidates unexpectedly point to the same source model")
 		return
 
 	var arena_root: Node3D = game.get("arena_root")
@@ -51,6 +57,12 @@ func _capture() -> void:
 	pieces[KNIGHT_SQUARE] = knight
 	await process_frame
 
+	# Gameplay/HUD composition has its own screenshot contract. Hide it here so
+	# material, silhouette, scale and camera problems are impossible to mask.
+	var ui_root: Control = game.get("ui_root")
+	if ui_root != null:
+		ui_root.visible = false
+
 	output_dir = ProjectSettings.globalize_path("res://build/visual")
 	DirAccess.make_dir_recursive_absolute(output_dir)
 
@@ -59,28 +71,46 @@ func _capture() -> void:
 		_fail("camera rig is unavailable")
 		return
 
-	# Close-ups are contractual evidence. If the staged source, import transform,
-	# materials or orientation are wrong, these images make it impossible for a
-	# flattering wide shot to hide the problem.
+	# Single-subject close-ups: the opponent is explicitly hidden, not merely
+	# placed off-camera. A wrong model can no longer masquerade as the subject.
+	knight.visible = false
+	mage.visible = true
 	_frame_subject(camera_rig.camera, mage.global_position, knight.global_position, -1.0)
 	await _save_frame("capture-pbr-mage.png")
 
+	mage.visible = false
+	knight.visible = true
 	_frame_subject(camera_rig.camera, knight.global_position, mage.global_position, 1.0)
 	await _save_frame("capture-pbr-knight.png")
 
-	# Then judge them together in the board context with restrained magical VFX.
+	# Two-subject duel proof. Both candidates must be visible and spatially
+	# separated before VFX is added.
+	mage.visible = true
+	knight.visible = true
+	var separation := mage.global_position.distance_to(knight.global_position)
+	if separation < 1.5:
+		_fail("PBR duel subjects are not sufficiently separated")
+		return
 	var midpoint := (mage.global_position + knight.global_position) * 0.5
 	_add_magic_impact(arena_root, midpoint + Vector3(0, 1.05, 0))
 	_frame_duel(camera_rig.camera, mage.global_position, knight.global_position)
 	await _save_frame("capture-duel.png")
 
 	print(
-		"CINEMATIC BATTLE: PASS PBR_MAGE=true PBR_KNIGHT=true mage_scale=%.4f knight_scale=%.4f" % [
+		"CINEMATIC BATTLE: PASS PBR_MAGE=true PBR_KNIGHT=true mage_scale=%.4f knight_scale=%.4f separation=%.2f" % [
 			float(mage.get_meta("normalization_scale", 0.0)),
-			float(knight.get_meta("normalization_scale", 0.0))
+			float(knight.get_meta("normalization_scale", 0.0)),
+			separation
 		]
 	)
 	quit(0)
+
+func _clear_runtime_pieces(pieces: Dictionary) -> void:
+	var squares_to_remove := pieces.keys().duplicate()
+	for square_variant in squares_to_remove:
+		_remove_runtime_piece(pieces, String(square_variant))
+	if not pieces.is_empty():
+		_fail("runtime piece cleanup left stale entries")
 
 func _remove_runtime_piece(pieces: Dictionary, square: String) -> void:
 	var existing: Node = pieces.get(square)
@@ -90,9 +120,20 @@ func _remove_runtime_piece(pieces: Dictionary, square: String) -> void:
 	var parent := existing.get_parent()
 	if parent != null:
 		parent.remove_child(existing)
-	# Immediate free is deliberate. queue_free() left the old procedural piece
-	# alive for the rest of the frame and made prior visual QA ambiguous.
 	existing.free()
+
+func _validate_candidate(candidate: Node3D, expected_archetype: String) -> void:
+	if not bool(candidate.get_meta("high_fidelity", false)):
+		_fail("candidate is missing high_fidelity marker: " + expected_archetype)
+		return
+	if String(candidate.get_meta("archetype", "")) != expected_archetype:
+		_fail("candidate archetype mismatch: " + expected_archetype)
+		return
+	if float(candidate.get_meta("target_height", 0.0)) < 1.5:
+		_fail("candidate target height is invalid: " + expected_archetype)
+		return
+	if float(candidate.get_meta("normalization_scale", 0.0)) <= 0.0:
+		_fail("candidate normalization scale is invalid: " + expected_archetype)
 
 func _frame_subject(camera: Camera3D, subject: Vector3, opponent: Vector3, side: float) -> void:
 	var duel_axis := opponent - subject
@@ -101,9 +142,9 @@ func _frame_subject(camera: Camera3D, subject: Vector3, opponent: Vector3, side:
 		duel_axis = Vector3(0, 0, -1)
 	duel_axis = duel_axis.normalized()
 	var lateral := Vector3(-duel_axis.z, 0.0, duel_axis.x) * side
-	camera.global_position = subject - duel_axis * 4.15 + lateral * 2.15 + Vector3.UP * 2.25
-	camera.fov = 34.0
-	camera.look_at(subject + Vector3.UP * 1.05, Vector3.UP)
+	camera.global_position = subject - duel_axis * 3.35 + lateral * 1.65 + Vector3.UP * 1.75
+	camera.fov = 31.0
+	camera.look_at(subject + Vector3.UP * 1.02, Vector3.UP)
 
 func _frame_duel(camera: Camera3D, mage_pos: Vector3, knight_pos: Vector3) -> void:
 	var midpoint := (mage_pos + knight_pos) * 0.5
@@ -113,9 +154,9 @@ func _frame_duel(camera: Camera3D, mage_pos: Vector3, knight_pos: Vector3) -> vo
 		duel_axis = Vector3(0, 0, -1)
 	duel_axis = duel_axis.normalized()
 	var lateral := Vector3(-duel_axis.z, 0.0, duel_axis.x)
-	camera.global_position = midpoint - duel_axis * 5.4 + lateral * 4.35 + Vector3.UP * 2.75
-	camera.fov = 39.0
-	camera.look_at(midpoint + Vector3.UP * 1.0, Vector3.UP)
+	camera.global_position = midpoint - duel_axis * 4.85 + lateral * 3.55 + Vector3.UP * 2.35
+	camera.fov = 36.0
+	camera.look_at(midpoint + Vector3.UP * 0.98, Vector3.UP)
 
 func _save_frame(filename: String) -> void:
 	await process_frame
