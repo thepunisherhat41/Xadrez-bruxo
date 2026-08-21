@@ -3,6 +3,10 @@ extends SceneTree
 const DUEL_FEN := "4k3/8/8/5n2/3Q4/8/8/4K3 w - - 0 1"
 const MAGE_SQUARE := "d4"
 const KNIGHT_SQUARE := "f5"
+const CLOSEUP_MIN_VISIBLE_RATIO := 0.008
+const DUEL_MIN_VISIBLE_RATIO := 0.0035
+const PIXEL_SAMPLE_STEP := 5
+const PIXEL_DELTA_THRESHOLD := 0.12
 
 var output_dir := ""
 
@@ -19,15 +23,12 @@ func _capture() -> void:
 	await process_frame
 	await process_frame
 
-	# Reuse the real arena/world, but make this an art-direction gate rather than
-	# a gameplay screenshot. Chess state still contains kings for legality; every
-	# procedural runtime character is removed visually before the PBR candidates
-	# are added, so old low-poly art can never contaminate this evidence.
 	game.call("_start_offline", "offline_local", DUEL_FEN)
 	await create_timer(0.35).timeout
 
 	var pieces: Dictionary = game.get("pieces")
-	_clear_runtime_pieces(pieces)
+	if not _clear_runtime_pieces(pieces):
+		return
 	await process_frame
 
 	var mage := HighFidelityFactory.create_shadowkin("wQ")
@@ -38,11 +39,18 @@ func _capture() -> void:
 	if knight == null:
 		_fail("PBR Forgotten Knight did not instantiate")
 		return
-
-	_validate_candidate(mage, "shadowkin")
-	_validate_candidate(knight, "forgotten_knight")
+	if not _validate_candidate(mage, "shadowkin"):
+		return
+	if not _validate_candidate(knight, "forgotten_knight"):
+		return
 	if String(mage.get_meta("source_path", "")) == String(knight.get_meta("source_path", "")):
 		_fail("PBR candidates unexpectedly point to the same source model")
+		return
+
+	var mage_body := mage.get_node_or_null("Facing") as Node3D
+	var knight_body := knight.get_node_or_null("Facing") as Node3D
+	if mage_body == null or knight_body == null:
+		_fail("PBR candidate is missing Facing visual body")
 		return
 
 	var arena_root: Node3D = game.get("arena_root")
@@ -57,8 +65,6 @@ func _capture() -> void:
 	pieces[KNIGHT_SQUARE] = knight
 	await process_frame
 
-	# Gameplay/HUD composition has its own screenshot contract. Hide it here so
-	# material, silhouette, scale and camera problems are impossible to mask.
 	var ui_root: Control = game.get("ui_root")
 	if ui_root != null:
 		ui_root.visible = false
@@ -71,46 +77,95 @@ func _capture() -> void:
 		_fail("camera rig is unavailable")
 		return
 
-	# Single-subject close-ups: the opponent is explicitly hidden, not merely
-	# placed off-camera. A wrong model can no longer masquerade as the subject.
+	# Close-up proof uses a rendered pixel delta, not AABB math. The premium base
+	# remains visible in both baseline and subject frames; only the imported body
+	# is toggled. Therefore an off-screen/empty model cannot pass because its ring
+	# happens to be visible on the board.
 	knight.visible = false
 	mage.visible = true
 	_frame_subject(camera_rig.camera, mage.global_position, knight.global_position, -1.0)
-	await _save_frame("capture-pbr-mage.png")
+	mage_body.visible = false
+	var mage_baseline := await _grab_frame()
+	mage_body.visible = true
+	var mage_image := await _grab_frame()
+	var mage_ratio := _pixel_difference_ratio(mage_baseline, mage_image)
+	if mage_ratio < CLOSEUP_MIN_VISIBLE_RATIO:
+		_fail("PBR Shadowkin is not visibly framed; pixel ratio=%.5f" % mage_ratio)
+		return
+	if not _save_image(mage_image, "capture-pbr-mage.png"):
+		return
 
 	mage.visible = false
 	knight.visible = true
 	_frame_subject(camera_rig.camera, knight.global_position, mage.global_position, 1.0)
-	await _save_frame("capture-pbr-knight.png")
+	knight_body.visible = false
+	var knight_baseline := await _grab_frame()
+	knight_body.visible = true
+	var knight_image := await _grab_frame()
+	var knight_ratio := _pixel_difference_ratio(knight_baseline, knight_image)
+	if knight_ratio < CLOSEUP_MIN_VISIBLE_RATIO:
+		_fail("PBR Forgotten Knight is not visibly framed; pixel ratio=%.5f" % knight_ratio)
+		return
+	if not _save_image(knight_image, "capture-pbr-knight.png"):
+		return
 
-	# Two-subject duel proof. Both candidates must be visible and spatially
-	# separated before VFX is added.
+	# Duel proof repeats the visibility contract from one fixed camera. Each body
+	# must independently contribute real pixels before both are rendered together.
 	mage.visible = true
 	knight.visible = true
 	var separation := mage.global_position.distance_to(knight.global_position)
 	if separation < 1.5:
 		_fail("PBR duel subjects are not sufficiently separated")
 		return
+	_frame_duel(camera_rig.camera, mage.global_position, knight.global_position)
+	mage_body.visible = false
+	knight_body.visible = false
+	var duel_baseline := await _grab_frame()
+	mage_body.visible = true
+	var duel_mage_only := await _grab_frame()
+	var duel_mage_ratio := _pixel_difference_ratio(duel_baseline, duel_mage_only)
+	mage_body.visible = false
+	knight_body.visible = true
+	var duel_knight_only := await _grab_frame()
+	var duel_knight_ratio := _pixel_difference_ratio(duel_baseline, duel_knight_only)
+	if duel_mage_ratio < DUEL_MIN_VISIBLE_RATIO:
+		_fail("PBR Shadowkin is missing from duel frame; pixel ratio=%.5f" % duel_mage_ratio)
+		return
+	if duel_knight_ratio < DUEL_MIN_VISIBLE_RATIO:
+		_fail("PBR Forgotten Knight is missing from duel frame; pixel ratio=%.5f" % duel_knight_ratio)
+		return
+
+	mage_body.visible = true
+	knight_body.visible = true
 	var midpoint := (mage.global_position + knight.global_position) * 0.5
 	_add_magic_impact(arena_root, midpoint + Vector3(0, 1.05, 0))
-	_frame_duel(camera_rig.camera, mage.global_position, knight.global_position)
-	await _save_frame("capture-duel.png")
+	var duel_image := await _grab_frame()
+	if not _save_image(duel_image, "capture-duel.png"):
+		return
 
 	print(
-		"CINEMATIC BATTLE: PASS PBR_MAGE=true PBR_KNIGHT=true mage_scale=%.4f knight_scale=%.4f separation=%.2f" % [
+		"CINEMATIC BATTLE: PASS PBR_MAGE=true PBR_KNIGHT=true mage_scale=%.4f knight_scale=%.4f mage_basis=%s knight_basis=%s closeup_ratios=%.4f/%.4f duel_ratios=%.4f/%.4f separation=%.2f" % [
 			float(mage.get_meta("normalization_scale", 0.0)),
 			float(knight.get_meta("normalization_scale", 0.0)),
+			String(mage.get_meta("normalization_basis", "unknown")),
+			String(knight.get_meta("normalization_basis", "unknown")),
+			mage_ratio,
+			knight_ratio,
+			duel_mage_ratio,
+			duel_knight_ratio,
 			separation
 		]
 	)
 	quit(0)
 
-func _clear_runtime_pieces(pieces: Dictionary) -> void:
+func _clear_runtime_pieces(pieces: Dictionary) -> bool:
 	var squares_to_remove := pieces.keys().duplicate()
 	for square_variant in squares_to_remove:
 		_remove_runtime_piece(pieces, String(square_variant))
 	if not pieces.is_empty():
 		_fail("runtime piece cleanup left stale entries")
+		return false
+	return true
 
 func _remove_runtime_piece(pieces: Dictionary, square: String) -> void:
 	var existing: Node = pieces.get(square)
@@ -122,18 +177,20 @@ func _remove_runtime_piece(pieces: Dictionary, square: String) -> void:
 		parent.remove_child(existing)
 	existing.free()
 
-func _validate_candidate(candidate: Node3D, expected_archetype: String) -> void:
+func _validate_candidate(candidate: Node3D, expected_archetype: String) -> bool:
 	if not bool(candidate.get_meta("high_fidelity", false)):
 		_fail("candidate is missing high_fidelity marker: " + expected_archetype)
-		return
+		return false
 	if String(candidate.get_meta("archetype", "")) != expected_archetype:
 		_fail("candidate archetype mismatch: " + expected_archetype)
-		return
+		return false
 	if float(candidate.get_meta("target_height", 0.0)) < 1.5:
 		_fail("candidate target height is invalid: " + expected_archetype)
-		return
+		return false
 	if float(candidate.get_meta("normalization_scale", 0.0)) <= 0.0:
 		_fail("candidate normalization scale is invalid: " + expected_archetype)
+		return false
+	return true
 
 func _frame_subject(camera: Camera3D, subject: Vector3, opponent: Vector3, side: float) -> void:
 	var duel_axis := opponent - subject
@@ -158,23 +215,50 @@ func _frame_duel(camera: Camera3D, mage_pos: Vector3, knight_pos: Vector3) -> vo
 	camera.fov = 36.0
 	camera.look_at(midpoint + Vector3.UP * 0.98, Vector3.UP)
 
-func _save_frame(filename: String) -> void:
+func _grab_frame() -> Image:
 	await process_frame
 	await process_frame
 	var image := root.get_texture().get_image()
 	if image == null or image.is_empty():
-		_fail("frame is empty: " + filename)
-		return
+		_fail("rendered frame is empty")
+		return null
+	return image
+
+func _save_image(image: Image, filename: String) -> bool:
+	if image == null or image.is_empty():
+		_fail("cannot save empty frame: " + filename)
+		return false
 	var error := image.save_png(output_dir.path_join(filename))
 	if error != OK:
 		_fail("could not save frame: " + filename)
-		return
+		return false
 	print("VISUAL_EVIDENCE ", filename, " ", image.get_width(), "x", image.get_height())
+	return true
+
+func _pixel_difference_ratio(before: Image, after: Image) -> float:
+	if before == null or after == null:
+		return 0.0
+	var width := mini(before.get_width(), after.get_width())
+	var height := mini(before.get_height(), after.get_height())
+	if width <= 0 or height <= 0:
+		return 0.0
+	var sampled := 0
+	var changed := 0
+	for y in range(0, height, PIXEL_SAMPLE_STEP):
+		for x in range(0, width, PIXEL_SAMPLE_STEP):
+			var left := before.get_pixel(x, y)
+			var right := after.get_pixel(x, y)
+			var delta := absf(left.r - right.r) + absf(left.g - right.g) + absf(left.b - right.b)
+			if delta >= PIXEL_DELTA_THRESHOLD:
+				changed += 1
+			sampled += 1
+	if sampled <= 0:
+		return 0.0
+	return float(changed) / float(sampled)
 
 func _add_magic_impact(parent: Node3D, position: Vector3) -> void:
 	var violet := Color("#8e4cff")
 	var white_hot := Color("#e8ddff")
-
 	var core := MeshInstance3D.new()
 	var sphere := SphereMesh.new()
 	sphere.radius = 0.14
@@ -184,7 +268,6 @@ func _add_magic_impact(parent: Node3D, position: Vector3) -> void:
 	core.material_override = _glow(white_hot, 4.4)
 	core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(core)
-
 	for i in range(2):
 		var ring := MeshInstance3D.new()
 		var torus := TorusMesh.new()
@@ -196,7 +279,6 @@ func _add_magic_impact(parent: Node3D, position: Vector3) -> void:
 		ring.material_override = _glow(violet, 2.7 - float(i) * 0.4)
 		ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		parent.add_child(ring)
-
 	var light := OmniLight3D.new()
 	light.position = position
 	light.light_color = violet
