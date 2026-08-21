@@ -1,0 +1,132 @@
+name: Cinematic Godot Rebuild
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'game/**'
+      - '.github/workflows/cinematic-godot.yml'
+  push:
+    branches:
+      - agent/godot-cinematic-rebuild
+    paths:
+      - 'game/**'
+      - '.github/workflows/cinematic-godot.yml'
+
+concurrency:
+  group: cinematic-godot-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Godot 4.7.1 stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o /tmp/godot.zip \
+            https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          GODOT_BIN="$(find /tmp/godot -maxdepth 1 -type f -name 'Godot*' | head -1)"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          "$GODOT_BIN" --version
+
+      - name: Stage mechanics character assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash game/tools/fetch_visual_assets.sh
+
+      - name: Stage high-fidelity PBR vertical slice
+        shell: bash
+        run: |
+          set -o pipefail
+          bash game/tools/stage_pbr_vertical_slice.sh 2>&1 | tee pbr-assets.log
+          test -s game/assets/vendor/pbr/ShadowkinMage.glb
+          test -s game/assets/vendor/pbr/ForgottenKnight.glb
+          grep -Fq 'ShadowkinMage.glb' pbr-assets.log
+          grep -Fq 'ForgottenKnight.glb' pbr-assets.log
+
+      - name: Import project and compile scripts
+        shell: bash
+        run: |
+          set -o pipefail
+          "$GODOT_BIN" --headless --path game --editor --quit 2>&1 | tee cinematic-import.log
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|Failed to load script' cinematic-import.log; then
+            exit 1
+          fi
+
+      - name: Inspect embedded combat assets
+        shell: bash
+        run: |
+          set -o pipefail
+          "$GODOT_BIN" --headless --path game --script res://scripts/AssetProbe.gd 2>&1 | tee cinematic-asset-probe.log
+          grep -Fq 'ASSET PROBE: PASS PBR_MAGE=true PBR_KNIGHT=true' cinematic-asset-probe.log
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|FAILED LOAD|FAILED EMPTY MODEL|ASSET PROBE: FAIL' cinematic-asset-probe.log; then
+            exit 1
+          fi
+
+      - name: Validate chess rules and offline AI
+        shell: bash
+        run: |
+          set -o pipefail
+          "$GODOT_BIN" --headless --path game --script res://scripts/SmokeTest.gd 2>&1 | tee cinematic-smoke.log
+          grep -Fq 'CINEMATIC CHESS SMOKE: PASS' cinematic-smoke.log
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|SMOKE FAIL' cinematic-smoke.log; then
+            exit 1
+          fi
+
+      - name: Render mandatory landscape gameplay reference
+        shell: bash
+        run: |
+          set -o pipefail
+          export LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a "$GODOT_BIN" --audio-driver Dummy --path game --script res://scripts/VisualCapture.gd 2>&1 | tee cinematic-visual.log
+          grep -Fq 'CINEMATIC VISUAL: PASS' cinematic-visual.log
+          test -s game/build/visual/gameplay-landscape.png
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|VISUAL CONTRACT FAIL' cinematic-visual.log; then
+            exit 1
+          fi
+
+      - name: Render PBR-vs-PBR combat gate
+        shell: bash
+        run: |
+          set -o pipefail
+          export LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a "$GODOT_BIN" --audio-driver Dummy --path game --script res://scripts/BattleCapture.gd 2>&1 | tee cinematic-battle.log
+          grep -Fq 'CINEMATIC BATTLE: PASS PBR_MAGE=true PBR_KNIGHT=true' cinematic-battle.log
+          test -s game/build/visual/capture-pbr-mage.png
+          test -s game/build/visual/capture-pbr-knight.png
+          test -s game/build/visual/capture-duel.png
+          if grep -Eiq 'SCRIPT ERROR|Parse Error|Compile Error|BATTLE CONTRACT FAIL|Condition "!is_inside_tree\(\)"|get_global_transform \(scene/3d/node_3d.cpp' cinematic-battle.log; then
+            exit 1
+          fi
+
+      - name: Upload visual review set
+        uses: actions/upload-artifact@v4
+        with:
+          name: xadrez-bruxo-cinematic-reference
+          path: game/build/visual/
+          if-no-files-found: error
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xadrez-bruxo-cinematic-logs
+          path: |
+            pbr-assets.log
+            cinematic-import.log
+            cinematic-asset-probe.log
+            cinematic-smoke.log
+            cinematic-visual.log
+            cinematic-battle.log
+          if-no-files-found: warn
